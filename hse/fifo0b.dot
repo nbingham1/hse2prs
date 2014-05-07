@@ -1,0 +1,107 @@
+digraph model
+{
+	subgraph fifo0b
+	{
+		graph["label"="" "variables"="L.r,L.a,R.r,R.a" "type"="local" "elaborate"="true" "reset"="~L.r&~L.a&~R.r&~R.a"];
+		S0["shape"="circle" "width"="0.15" "peripheries"="2" "style"="filled" "fillcolor"="#000000" "label"=""];
+		T0["shape"="plaintext" "label"="[ 1 ]"];
+		S0->T0;
+		S1["shape"="circle" "width"="0.25" "label"=""];
+		T0->S1;
+		T1["shape"="plaintext" "label"="[ L.r ]"];
+		S1->T1;
+		S2["shape"="circle" "width"="0.25" "label"=""];
+		T1->S2;
+		T2["shape"="plaintext" "label"="L.a"];
+		S2->T2;
+		S3["shape"="circle" "width"="0.25" "label"=""];
+		T2->S3;
+		T3["shape"="plaintext" "label"="[ ~L.r ]"];
+		S3->T3;
+		S4["shape"="circle" "width"="0.25" "label"=""];
+		T3->S4;
+		T4["shape"="plaintext" "label"="~L.a"];
+		S4->T4;
+		S5["shape"="circle" "width"="0.25" "label"=""];
+		T4->S5;
+		T5["shape"="plaintext" "label"="R.r"];
+		S5->T5;
+		S6["shape"="circle" "width"="0.25" "label"=""];
+		T5->S6;
+		T6["shape"="plaintext" "label"="[ R.a ]"];
+		S6->T6;
+		S7["shape"="circle" "width"="0.25" "label"=""];
+		T6->S7;
+		T7["shape"="plaintext" "label"="~R.r"];
+		S7->T7;
+		S8["shape"="circle" "width"="0.25" "label"=""];
+		T7->S8;
+		T8["shape"="plaintext" "label"="[ ~R.a ]"];
+		S8->T8;
+		T8->S0;
+		T9["shape"="plaintext" "label"="[ 0 ]"];
+		S0->T9;
+		T9->S0;
+	}
+	subgraph environment
+	{
+		graph["label"="" "variables"="L.r,L.a,R.r,R.a" "type"="remote" "elaborate"="false" "reset"="~L.r&~L.a&~R.r&~R.a"];
+		S9["shape"="circle" "width"="0.15" "peripheries"="2" "style"="filled" "fillcolor"="#000000" "label"=""];
+		T10["shape"="plaintext" "label"="1"];
+		S9->T10;
+		S10["shape"="circle" "width"="0.25" "label"=""];
+		T10->S10;
+		T11["shape"="plaintext" "label"="[ 1 ]"];
+		S10->T11;
+		S11["shape"="circle" "width"="0.25" "label"=""];
+		T11->S11;
+		T12["shape"="plaintext" "label"="L.r"];
+		S11->T12;
+		S12["shape"="circle" "width"="0.25" "label"=""];
+		T12->S12;
+		T13["shape"="plaintext" "label"="[ L.a ]"];
+		S12->T13;
+		S13["shape"="circle" "width"="0.25" "label"=""];
+		T13->S13;
+		T14["shape"="plaintext" "label"="~L.r"];
+		S13->T14;
+		S14["shape"="circle" "width"="0.25" "label"=""];
+		T14->S14;
+		T15["shape"="plaintext" "label"="[ ~L.a ]"];
+		S14->T15;
+		T15->S10;
+		T16["shape"="plaintext" "label"="[ 0 ]"];
+		S10->T16;
+		S15["shape"="circle" "width"="0.25" "label"=""];
+		T16->S15;
+		S16["shape"="circle" "width"="0.25" "label"=""];
+		T10->S16;
+		T17["shape"="plaintext" "label"="[ 1 ]"];
+		S16->T17;
+		S17["shape"="circle" "width"="0.25" "label"=""];
+		T17->S17;
+		T18["shape"="plaintext" "label"="[ R.r ]"];
+		S17->T18;
+		S18["shape"="circle" "width"="0.25" "label"=""];
+		T18->S18;
+		T19["shape"="plaintext" "label"="R.a"];
+		S18->T19;
+		S19["shape"="circle" "width"="0.25" "label"=""];
+		T19->S19;
+		T20["shape"="plaintext" "label"="[ ~R.r ]"];
+		S19->T20;
+		S20["shape"="circle" "width"="0.25" "label"=""];
+		T20->S20;
+		T21["shape"="plaintext" "label"="~R.a"];
+		S20->T21;
+		T21->S16;
+		T22["shape"="plaintext" "label"="[ 0 ]"];
+		S16->T22;
+		S21["shape"="circle" "width"="0.25" "label"=""];
+		T22->S21;
+		T23["shape"="plaintext" "label"="1"];
+		S15->T23;
+		S21->T23;
+		T23->S9;
+	}
+}

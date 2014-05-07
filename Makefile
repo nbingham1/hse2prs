@@ -1,13 +1,10 @@
-CXXFLAGS	= -O2 -g -Wall -fmessage-length=0 -std=c++0x
+CXXFLAGS =	-O2 -g -Wall -fmessage-length=0
 
-OBJS	= src/data/canonical.o src/data/minterm.o src/data/path_space.o src/data/path.o src/data/petri.o src/data/program_counter.o src/data/variable_space.o src/data/variable.o \
-		  src/syntax/assignment.o src/syntax/composition.o src/syntax/condition.o src/syntax/control.o src/syntax/debug.o src/syntax/guard.o src/syntax/instruction.o src/syntax/loop.o src/syntax/parallel.o src/syntax/rule_space.o src/syntax/rule.o src/syntax/sequential.o src/syntax/skip.o \
-		  src/type/channel.o src/type/keyword.o src/type/operator.o src/type/process.o src/type/record.o \
-		  src/chp.o src/common.o src/flag_space.o src/program.o src/utility.o \
+OBJS =		src/chp.o src/common.o src/tokenizer.o src/dot.o src/message.o src/petri.o src/path.o src/path_space.o src/process.o src/minterm.o src/canonical.o src/variable.o src/variable_space.o src/program_counter.o
 
-LIBS	=
+LIBS =
 
-TARGET	= haystack
+TARGET =	hse2states
 
 $(TARGET):	$(OBJS)
 	$(CXX) -o $(TARGET) $(OBJS) $(LIBS)
