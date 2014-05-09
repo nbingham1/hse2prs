@@ -2339,6 +2339,17 @@ dot_stmt petri_net::export_dot(int t_base, int s_base, bool node_ids, bool arc_i
 	for (size_t i = 0; i < assertions.size(); i++)
 		a_list.as.push_back(dot_a("assert", assertions[i].print(vars)));
 
+	string pnodes = "";
+	for (list<pair<petri_index, petri_index> >::iterator n = parallel_nodes.begin(); n != parallel_nodes.end(); n++)
+	{
+		if (n != parallel_nodes.begin())
+			pnodes += " ";
+
+		pnodes += to_string(n->first) + to_string(n->second);
+	}
+
+	a_list.as.push_back(dot_a("parallel_nodes", pnodes));
+
 	substmt.stmt_type = "attr";
 	substmt.attr_type = "graph";
 	substmt.attr_list.attrs.push_back(a_list);
@@ -2603,6 +2614,23 @@ void petri_net::import_dot(tokenizer &tokens, const dot_stmt &g, int t_base, int
 							assumptions &= canonical(tokens, g.stmt_list.stmts[i].attr_list.attrs[j].as[k].second.id, vars);
 						else if (g.stmt_list.stmts[i].attr_list.attrs[j].as[k].first.id == "assert")
 							assertions.push_back(canonical(tokens, g.stmt_list.stmts[i].attr_list.attrs[j].as[k].second.id, vars));
+						else if (g.stmt_list.stmts[i].attr_list.attrs[j].as[k].first.id == "parallel_nodes")
+						{
+							string pnodes = g.stmt_list.stmts[i].attr_list.attrs[j].as[k].second.id;
+							size_t j, k;
+							for (j = 0, k = pnodes.find_first_of(" "); j != string::npos && k != string::npos; j = k+1, k = pnodes.find_first_of(" ", j))
+							{
+								string npair = pnodes.substr(j, k-j);
+								size_t l = npair.find_first_of("ST", 1);
+								parallel_nodes.push_back(pair<petri_index, petri_index>(petri_index(npair.substr(0, l)), petri_index(npair.substr(l))));
+							}
+							if (j < pnodes.size())
+							{
+								string npair = pnodes.substr(j);
+								size_t l = npair.find_first_of("ST", 1);
+								parallel_nodes.push_back(pair<petri_index, petri_index>(petri_index(npair.substr(0, l)), petri_index(npair.substr(l))));
+							}
+						}
 						tokens.index = old;
 					}
 			}

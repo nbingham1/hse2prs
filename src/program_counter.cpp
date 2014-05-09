@@ -654,6 +654,22 @@ void program_execution_space::full_elaborate()
 
 			sort(exec->pcs.begin(), exec->pcs.end());
 
+			/* Since the program counters have been sorted at this point,
+			 * we can also assume that the indices are sorted relative to eachother.
+			 * this means that all we have to do iterate and check whether the pair i,j
+			 * is already in the parallel node list. And if it isn't, then we need to put it there.
+			 */
+			for (size_t i = 0; i < exec->pcs.size(); i++)
+				for (size_t j = i+1; j < exec->pcs.size(); j++)
+					if (exec->pcs[i].name == exec->pcs[j].name && exec->pcs[i].net == exec->pcs[j].net && exec->pcs[i].index != exec->pcs[j].index)
+					{
+						pair<petri_index, petri_index> para(exec->pcs[i].index, exec->pcs[j].index);
+						list<pair<petri_index, petri_index> >::iterator lb = lower_bound(exec->pcs[i].net->parallel_nodes.begin(), exec->pcs[i].net->parallel_nodes.end(), para);
+						if (lb == exec->pcs[i].net->parallel_nodes.end() || *lb != para)
+							exec->pcs[i].net->parallel_nodes.insert(lb, para);
+					}
+
+
 			/*********************************
 			 * Handle local program counters *
 			 *********************************/
@@ -672,21 +688,6 @@ void program_execution_space::full_elaborate()
 
 			if (ready_transitions.size() == 0)
 			{
-				/* Since the program counters have been sorted at this point,
-				 * we can also assume that the indices are sorted relative to eachother.
-				 * this means that all we have to do iterate and check whether the pair i,j
-				 * is already in the parallel node list. And if it isn't, then we need to put it there.
-				 */
-				for (size_t i = 0; i < exec->pcs.size(); i++)
-					for (size_t j = i+1; j < exec->pcs.size(); j++)
-						if (exec->pcs[i].name == exec->pcs[j].name && exec->pcs[i].net == exec->pcs[j].net && exec->pcs[i].index != exec->pcs[j].index)
-						{
-							pair<petri_index, petri_index> para(exec->pcs[i].index, exec->pcs[j].index);
-							list<pair<petri_index, petri_index> >::iterator lb = lower_bound(exec->pcs[i].net->parallel_nodes.begin(), exec->pcs[i].net->parallel_nodes.end(), para);
-							if (lb == exec->pcs[i].net->parallel_nodes.end() || *lb != para)
-								exec->pcs[i].net->parallel_nodes.insert(lb, para);
-						}
-
 				/* At this point, we want to loop through groups of program counters
 				 * where each group represents a different process in the simulation.
 				 */

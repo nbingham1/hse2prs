@@ -378,13 +378,13 @@ void tokenizer::insert(string filename, string contents)
 					size++;
 				}
 			else if (contents[start] == '\"')
-				while (start + size < contents.size() && contents[start+size] != '\n' && (size <= 1 || contents[start+size-1] != '\"' || contents[start+size-2] == '\\'))
+				while (start + size < contents.size() && (size <= 1 || contents[start+size-1] != '\"' || contents[start+size-2] == '\\'))
 				{
 					files.back().second.back().push_back(contents[start + size]);
 					size++;
 				}
 			else if (contents[start] == '\'')
-				while (start + size < contents.size() && contents[start+size] != '\n' && (size <= 1 || contents[start+size-1] != '\'' || contents[start+size-2] == '\\'))
+				while (start + size < contents.size() && (size <= 1 || contents[start+size-1] != '\'' || contents[start+size-2] == '\\'))
 				{
 					files.back().second.back().push_back(contents[start + size]);
 					size++;
