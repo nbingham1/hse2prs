@@ -1,15 +1,20 @@
-CXXFLAGS =	-O2 -g -Wall -fmessage-length=0
+CXXFLAGS	 =  -O2 -g -Wall -fmessage-length=0
+SOURCES	    :=  $(shell find src -name '*.cpp')
+OBJECTS	    :=  $(SOURCES:src/%.cpp=build/%.o)
+DIRECTORIES :=  $(sort $(dir $(OBJECTS)))
+LDFLAGS		 =  
+TARGET		 =  hse2states
 
-OBJS =		src/chp.o src/common.o src/tokenizer.o src/dot.o src/message.o src/petri.o src/path.o src/path_space.o src/process.o src/minterm.o src/canonical.o src/variable.o src/variable_space.o src/program_counter.o
+all: build $(TARGET)
 
-LIBS =
+$(TARGET): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(OBJECTS) -o $(TARGET)
 
-TARGET =	hse2states
-
-$(TARGET):	$(OBJS)
-	$(CXX) -o $(TARGET) $(OBJS) $(LIBS)
-
-all:	$(TARGET)
+build/%.o: src/%.cpp 
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -c -o $@ $<
+	
+build:
+	mkdir $(DIRECTORIES)
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET) $(TARGET).exe
