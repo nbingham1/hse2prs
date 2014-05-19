@@ -67,6 +67,7 @@ struct petri_node
 
 	canonical assumptions;
 	vector<canonical> assertions;
+	vector<petri_index> refs;
 
 	pair<int, int> sense_count();
 };
@@ -91,10 +92,11 @@ struct petri_net
 	map<petri_index, list<vector<petri_index> > > indistinguishable;
 	int max_indistinguishables;
 
-	variable_space vars;
 	vector<canonical> assertions;
 	canonical assumptions;
 	canonical reset;
+
+	variable_space vars;
 
 	// Functions for adding, removing, and connecting nodes
 	petri_index put_place(canonical root);
@@ -120,6 +122,8 @@ struct petri_net
 	void pinch_backward(petri_index n);
 	void insert(int a, canonical root, bool active);
 	void insert_alongside(petri_index from, petri_index to, canonical root, bool active);
+	void insert_before(petri_index i, canonical root, bool active);
+	void insert_after(petri_index i, canonical root, bool active);
 	petri_index duplicate(petri_index n);
 	vector<petri_index> duplicate(vector<petri_index> n);
 	petri_index merge(petri_index n0, petri_index n1);
@@ -154,14 +158,13 @@ struct petri_net
 	pair<int, int> closest_input(vector<int> from, vector<int> to);
 	pair<int, int> closest_output(vector<int> from, vector<int> to);
 	void get_paths(vector<int> from, vector<int> to, path_space *result);
+	vector<int> start_path(vector<int> to, vector<int> from);
 	void zero_paths(path_space *paths, petri_index from);
 	void zero_paths(path_space *paths, vector<petri_index> from);
 	void zero_ins(path_space *paths, petri_index from);
 	void zero_ins(path_space *paths, vector<petri_index> from);
 	void zero_outs(path_space *paths, petri_index from);
 	void zero_outs(path_space *paths, vector<petri_index> from);
-	vector<int> start_path(int from, vector<int> ex);
-	vector<int> start_path(vector<int> from, vector<int> ex);
 	vector<petri_index> end_path(petri_index to, vector<petri_index> ex);
 	vector<petri_index> end_path(vector<petri_index> to, vector<petri_index> ex);
 
@@ -196,7 +199,7 @@ struct petri_net
 	vector<petri_index> get_cut(vector<petri_index> base, bool backward, bool conditional);
 	vector<int> get_arc_cut(vector<int> base, bool backward, bool conditional);
 
-	dot_stmt export_dot(int t_base, int s_base, bool node_ids, bool arc_ids);
+	dot_stmt export_dot(int t_base, int s_base);
 	void import_dot(tokenizer &tokens, const dot_stmt &g, int t_base, int s_base);
 };
 

@@ -32,25 +32,30 @@ void process::elaborate()
 	for (list<petri_net>::iterator net = nets.begin(); net != nets.end(); net++)
 	{
 		if (net->remote)
-			elaborater.execs.back().init_rpcs(net->label, &(*net));
+			elaborater.execs.back().init_rpcs(net->label, &*net);
 		else
-			elaborater.execs.back().init_pcs(net->label, &(*net), net->elaborate);
+			elaborater.execs.back().init_pcs(net->label, &*net, net->elaborate);
 	}
 
 	elaborater.full_elaborate();
 
 	if (get_verbose())
-		export_dot(true).print();
+		export_dot().print();
 }
 
 void process::check()
 {
+	elaborate();
+
 	for (list<petri_net>::iterator net = nets.begin(); net != nets.end(); net++)
 	{
 		if (net->elaborate && !net->remote)
 		{
 			net->generate_observed();
 			net->generate_conflicts();
+			/*cout << net->second.conflicts << endl;
+			cout << net->second.indistinguishable << endl;
+			net->generate_conflicts(&net->second);*/
 		}
 	}
 
@@ -66,9 +71,8 @@ void process::solve()
 
 		done = true;
 		for (list<petri_net>::iterator net = nets.begin(); net != nets.end(); net++)
-			done = done && !net->solve_conflicts();
-
-		elaborate();
+			if (net->elaborate && !net->remote)
+				done = done && !net->solve_conflicts();
 	} while (!done && is_clean());
 }
 
@@ -108,7 +112,7 @@ void process::import_dot(tokenizer &tokens, dot_graph &graph)
 	}
 }
 
-dot_graph process::export_dot(bool label)
+dot_graph process::export_dot()
 {
 	dot_graph result;
 	result.id = "model";
@@ -116,7 +120,7 @@ dot_graph process::export_dot(bool label)
 	size_t t_base = 0, s_base = 0;
 	for (list<petri_net>::iterator net = nets.begin(); net != nets.end(); net++)
 	{
-		result.stmt_list.stmts.push_back(net->export_dot(t_base, s_base, label, false));
+		result.stmt_list.stmts.push_back(net->export_dot(t_base, s_base));
 		t_base += net->T.size();
 		s_base += net->S.size();
 	}

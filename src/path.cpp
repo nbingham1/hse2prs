@@ -154,7 +154,6 @@ vector<int>::iterator path::end()
 
 path &path::operator=(path p)
 {
-	nodes.clear();
 	nodes = p.nodes;
 	from = p.from;
 	to = p.to;
@@ -199,28 +198,16 @@ path operator*(path p1, int n)
 
 bool operator==(path p1, path p2)
 {
-	for (int i = 0; i < max(p1.size(), p2.size()); i++)
-		if (p1[i] != p2[i])
-			return false;
-
-	return true;
+	return p1.nodes == p2.nodes;
 }
 
 bool operator<(path p1, path p2)
 {
-	for (int i = 0; i < max(p1.size(), p2.size()); i++)
-		if (p1[i] != p2[i])
-			return p1[i] < p2[i];
-
-	return false;
+	return p1.nodes < p2.nodes;
 }
 
 
 bool operator>(path p1, path p2)
 {
-	for (int i = 0; i < max(p1.size(), p2.size()); i++)
-		if (p1[i] != p2[i])
-			return p1[i] > p2[i];
-
-	return false;
+	return p1.nodes > p2.nodes;
 }

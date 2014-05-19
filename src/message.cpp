@@ -239,7 +239,6 @@ void log(string location, string log, string debug_file, int debug_line)
 
 void progress(string location, string log, string debug_file, int debug_line)
 {
-	cout << "\r";
 #ifdef DEBUG
 	cout << debug_file << ":" << debug_line << ":";
 	if (location == "")
@@ -247,13 +246,13 @@ void progress(string location, string log, string debug_file, int debug_line)
 #endif
 	if (location != "")
 		cout << location << ":\t";
-	cout << log << "                    ";
+	cout << log << string(100, ' ') << "\r";
 	cout.flush();
 }
 
 void done_progress()
 {
-	cout << "\r";
+	cout << string(100, ' ') << "\r";
 	cout.flush();
 }
 

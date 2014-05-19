@@ -106,7 +106,7 @@ ostream &operator<<(ostream &os, program_counter p)
 
 remote_petri_index::remote_petri_index()
 {
-
+	iteration = 0;
 }
 
 remote_petri_index::remote_petri_index(int idx, int iter, bool place) : petri_index(idx, place)
@@ -561,10 +561,14 @@ void program_execution_space::full_elaborate()
 		program_execution *exec = &current_execution;
 		execs.pop_back();
 
+		string name;
+		if (exec->pcs.size() > 0)
+			name = exec->pcs[0].net->name;
+
 		if (get_verbose())
-			log("", "Execution " + to_string(number_processed) + " " + to_string(execs.size()), __FILE__, __LINE__);
+			log("", name + ": execution " + to_string(number_processed) + " " + to_string(execs.size()), __FILE__, __LINE__);
 		else if (500*(int)(number_processed/500) == number_processed)
-			progress("", "Execution " + to_string(number_processed) + " " + to_string(execs.size()), __FILE__, __LINE__);
+			progress("", name + ": execution " + to_string(number_processed) + " " + to_string(execs.size()), __FILE__, __LINE__);
 
 		while (!exec->done && !exec->deadlock)
 		{
@@ -744,7 +748,10 @@ void program_execution_space::full_elaborate()
 
 							// If so, then all places leading into this transition are designated as ready.
 							if (satisfied)
+							{
+								sort(count.begin(), count.end());
 								ready_places.push_back(pair<petri_index, vector<size_t> >(next[i], count));
+							}
 						}
 					}
 				}
@@ -845,12 +852,12 @@ void program_execution_space::full_elaborate()
 							texec->pcs[cpc].index = texec->pcs[cpc].n[k];
 							texec->pcs[cpc].n.clear();
 							texec->pcs[cpc].p.clear();
-							for (size_t i = 0; i < texec->pcs[cpc].net->arcs.size(); i++)
+							for (size_t j = 0; j < texec->pcs[cpc].net->arcs.size(); j++)
 							{
-								if (texec->pcs[cpc].net->arcs[i].first == texec->pcs[cpc].index)
-									texec->pcs[cpc].n.push_back(texec->pcs[cpc].net->arcs[i].second);
-								if (texec->pcs[cpc].net->arcs[i].second == texec->pcs[cpc].index)
-									texec->pcs[cpc].p.push_back(texec->pcs[cpc].net->arcs[i].first);
+								if (texec->pcs[cpc].net->arcs[j].first == texec->pcs[cpc].index)
+									texec->pcs[cpc].n.push_back(texec->pcs[cpc].net->arcs[j].second);
+								if (texec->pcs[cpc].net->arcs[j].second == texec->pcs[cpc].index)
+									texec->pcs[cpc].p.push_back(texec->pcs[cpc].net->arcs[j].first);
 							}
 						}
 					}
@@ -898,6 +905,31 @@ void program_execution_space::full_elaborate()
 					if (ready_places.size() > 1)
 						log("", "adding " + to_string(ready_places.size()-1) + " executions for different orderings", __FILE__, __LINE__);
 
+					/* If more than one transition can be enabled at any given time, then
+					 * the arcs leading to those transitions are considered to be parallel
+					 * as long as they don't originate from the same set of places.
+					 */
+					for (size_t i = 0; i < ready_places.size(); i++)
+						for (size_t j = i+1; j < ready_places.size(); j++)
+							if (exec->pcs[ready_places[i].second.front()].net == exec->pcs[ready_places[j].second.front()].net &&
+								exec->pcs[ready_places[i].second.front()].name == exec->pcs[ready_places[j].second.front()].name &&
+								ready_places[i].second != ready_places[j].second)
+
+								for (size_t k = 0; k < ready_places[i].second.size(); k++)
+									for (size_t l = 0; l < ready_places[j].second.size(); l++)
+									{
+										pair<petri_index, petri_index> para;
+										if (ready_places[i].first < ready_places[j].first)
+											para = pair<petri_index, petri_index>(ready_places[i].first, ready_places[j].first);
+										else if (ready_places[i].first > ready_places[j].first)
+											para = pair<petri_index, petri_index>(ready_places[j].first, ready_places[i].first);
+
+										petri_net *net = exec->pcs[ready_places[i].second.front()].net;
+										list<pair<petri_index, petri_index> >::iterator lb = lower_bound(net->parallel_nodes.begin(), net->parallel_nodes.end(), para);
+										if (lb == net->parallel_nodes.end() || *lb != para)
+											net->parallel_nodes.insert(lb, para);
+									}
+
 					for (size_t i = 0; i < ready_places.size(); i++)
 					{
 						program_execution *oexec = exec;
@@ -908,7 +940,7 @@ void program_execution_space::full_elaborate()
 
 						for (int j = ready_places[i].second.size()-1; j > 0; j--)
 						{
-							oexec->pcs[ready_places[i].second[0]].state &= oexec->pcs[ready_places[i].second[j]].state;
+							oexec->pcs[pc].state &= oexec->pcs[ready_places[i].second[j]].state;
 							oexec->pcs.erase(oexec->pcs.begin() + ready_places[i].second[j]);
 						}
 

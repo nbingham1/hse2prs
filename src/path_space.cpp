@@ -96,15 +96,6 @@ void path_space::clear()
 	total.clear();
 }
 
-void path_space::inc(int i)
-{
-	list<path>::iterator pi;
-	for (pi = paths.begin(); pi != paths.end(); pi++)
-		(*pi)[i]++;
-
-	total[i] += paths.size();
-}
-
 void path_space::zero(int i)
 {
 	list<path>::iterator pi;
@@ -132,16 +123,63 @@ void path_space::zero(vector<int> i)
 		total[i[j]] = 0;
 }
 
-void path_space::sub(int i, int v)
+void path_space::inc(int i, int v)
 {
-	list<path>::iterator pi;
-	for (pi = paths.begin(); pi != paths.end(); pi++)
+	for (list<path>::iterator pi = paths.begin(); pi != paths.end(); pi++)
+		(*pi)[i] += v;
+
+	total[i] += paths.size()*v;
+}
+
+void path_space::dec(int i, int v)
+{
+	for (list<path>::iterator pi = paths.begin(); pi != paths.end(); pi++)
 	{
 		(*pi)[i] -= v;
 		if (pi->empty())
 			pi = paths.erase(pi);
 	}
-	total[i] -= v;
+	total[i] -= paths.size()*v;
+}
+
+void path_space::inc(list<path>::iterator i, int j, int v)
+{
+	i->nodes[j] += v;
+	total.nodes[j] += v;
+}
+
+void path_space::dec(list<path>::iterator i, int j, int v)
+{
+	total.nodes[j] -= i->nodes[j];
+	i->nodes[j] -= v;
+
+	if (i->nodes[j] < 0)
+		i->nodes[j] = 0;
+
+	total.nodes[j] += i->nodes[j];
+}
+
+void path_space::repair()
+{
+	total.nodes.resize(0, 0);
+	total.from.clear();
+	total.to.clear();
+	for (list<path>::iterator p = paths.begin(); p != paths.end(); p++)
+	{
+		total.from.insert(total.from.end(), p->from.begin(), p->from.end());
+		total.to.insert(total.to.end(), p->to.begin(), p->to.end());
+
+		if (total.nodes.size() < p->nodes.size())
+			total.nodes.resize(p->nodes.size(), 0);
+
+		for (size_t i = 0; i < p->nodes.size(); i++)
+			total.nodes[i] += p->nodes[i];
+	}
+
+	sort(total.from.begin(), total.from.end());
+	total.from.resize(unique(total.from.begin(), total.from.end()) - total.from.begin());
+	sort(total.to.begin(), total.to.end());
+	total.to.resize(unique(total.to.begin(), total.to.end()) - total.to.begin());
 }
 
 int path_space::coverage_count(int n)

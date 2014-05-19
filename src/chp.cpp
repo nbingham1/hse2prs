@@ -15,7 +15,6 @@
 int main(int argc, char **argv)
 {
 	vector<string> files;
-	bool label = false;
 	bool stream = false;
 	bool check = false;
 	bool unique = false;
@@ -30,7 +29,6 @@ int main(int argc, char **argv)
 			cout << "    --version\t\tDisplay compiler version information" << endl;
 			cout << " -s,--stream\t\tPrint the results to standard out" << endl;
 			cout << " -v,--verbose\t\tPrint all steps taken in simulation" << endl;
-			cout << " -l,--label\t\t\tPlace the id of each node next to it as an external label" << endl;
 			cout << " -u,--unique\t\t\tInsert state variable transitions to ensure that the resulting set of states have unique predicates" << endl;
 			cout << " -c,--check\t\t\tDisplay states with conflicting predicates" << endl;
 			return 0;
@@ -45,8 +43,6 @@ int main(int argc, char **argv)
 		}
 		else if (arg == "--verbose" || arg == "-v")
 			set_verbose();
-		else if (arg == "--label" || arg == "-l")
-			label = true;
 		else if (arg == "--stream" || arg == "-s")
 			stream = true;
 		else if (arg == "--check" || arg == "-c")
@@ -101,9 +97,12 @@ int main(int argc, char **argv)
 		for (size_t i = 0; i < cluster.graphs.size(); i++)
 		{
 			process p(tokens, cluster.graphs[i]);
-			p.elaborate();
+			if (!unique && !check && is_clean())
+				p.elaborate();
+
 			if (unique && is_clean())
 				p.solve();
+
 			if (check && is_clean())
 			{
 				bool saved_verbosity = get_verbose();
@@ -113,7 +112,7 @@ int main(int argc, char **argv)
 
 			}
 			if (is_clean())
-				result.graphs.push_back(p.export_dot(label));
+				result.graphs.push_back(p.export_dot());
 		}
 		cluster.graphs.clear();
 	}

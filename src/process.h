@@ -28,7 +28,7 @@ struct process
 	void print_conflicts();
 
 	void import_dot(tokenizer &tokens, dot_graph &graph);
-	dot_graph export_dot(bool label = false);
+	dot_graph export_dot();
 };
 
 #endif

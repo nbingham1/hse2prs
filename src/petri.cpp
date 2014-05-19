@@ -143,6 +143,7 @@ ostream &operator<<(ostream &os, petri_arc a)
 
 petri_node::petri_node()
 {
+	active = false;
 	assumptions = 1;
 }
 
@@ -179,6 +180,7 @@ petri_net::petri_net()
 	remote = false;
 	elaborate = true;
 	assumptions = 1;
+	max_indistinguishables = 0;
 }
 
 petri_net::~petri_net()
@@ -365,6 +367,9 @@ void petri_net::pinch_forward(petri_index n)
 	connect(n1p, from);
 	connect(from, to);
 
+	for (size_t i = 0; i < n1.size(); i++)
+		at(n).predicate &= at(n1[i]).predicate;
+
 	cut(n1);
 }
 
@@ -387,6 +392,10 @@ void petri_net::pinch_backward(petri_index n)
 
 	connect(to, n1n);
 	connect(from, to);
+
+	for (size_t i = 0; i < n1.size(); i++)
+		at(n).predicate &= at(n1[i]).predicate;
+
 	cut(n1);
 }
 
@@ -413,7 +422,76 @@ void petri_net::insert(int a, canonical root, bool active)
 
 void petri_net::insert_alongside(petri_index from, petri_index to, canonical root, bool active)
 {
+	petri_index t = put_transition(root, active);
+	if (from.is_place())
+		connect(from, t);
+	else
+	{
+		petri_index p = put_place(0);
+		connect(from, p);
+		connect(p, t);
+	}
 
+	if (to.is_place())
+		connect(t, to);
+	else
+	{
+		petri_index p = put_place(0);
+		connect(t, p);
+		connect(p, to);
+	}
+}
+
+void petri_net::insert_before(petri_index i, canonical root, bool active)
+{
+	vector<int> input = incoming(i);
+	petri_index p = put_place(0);
+	petri_index t = put_transition(root, active);
+
+	if (i.is_place())
+	{
+		connect(t, i);
+		connect(p, t);
+		for (size_t j = 0; j < input.size(); j++)
+			connect(arcs[input[j]].first, p);
+	}
+	else
+	{
+		connect(p, i);
+		connect(t, p);
+		for (size_t j = 0; j < input.size(); j++)
+			connect(arcs[input[j]].first, t);
+	}
+
+	sort(input.rbegin(), input.rend());
+	for (size_t j = 0; j < input.size(); j++)
+		arcs.erase(arcs.begin() + input[j]);
+}
+
+void petri_net::insert_after(petri_index i, canonical root, bool active)
+{
+	vector<int> input = outgoing(i);
+	petri_index p = put_place(0);
+	petri_index t = put_transition(root, active);
+
+	if (i.is_place())
+	{
+		connect(i, t);
+		connect(t, p);
+		for (size_t j = 0; j < input.size(); j++)
+			connect(p, arcs[input[j]].second);
+	}
+	else
+	{
+		connect(i, p);
+		connect(p, t);
+		for (size_t j = 0; j < input.size(); j++)
+			connect(t, arcs[input[j]].second);
+	}
+
+	sort(input.rbegin(), input.rend());
+	for (size_t j = 0; j < input.size(); j++)
+		arcs.erase(arcs.begin() + input[j]);
 }
 
 petri_index petri_net::duplicate(petri_index n)
@@ -818,61 +896,226 @@ pair<int, int> petri_net::closest_output(vector<int> from, vector<int> to)
 
 void petri_net::get_paths(vector<int> from, vector<int> to, path_space *result)
 {
-	for (size_t i = 0; i < from.size(); i++)
+	sort(to.begin(), to.end());
+	to.resize(unique(to.begin(), to.end()) - to.begin());
+	sort(from.begin(), from.end());
+	from.resize(unique(from.begin(), from.end()) - from.begin());
+
+	vector<int> ex = from;
+
+	do
 	{
-		vector<int> ex = from;
-		ex.erase(ex.begin() + i);
+		list<path_space> paths(1, path_space(arcs.size()));
+		for (size_t i = 0; i < from.size(); i++)
+			paths.back().paths.push_back(path(arcs.size(), from[i], from[i]));
 
-		result->paths.push_back(path(arcs.size(), from[i], from[i]));
-		list<path>::iterator path = result->paths.end();
-		path--;
-		while (path != result->paths.end())
+		/* This part could actually be really simple if we didn't care about one optimization.
+		 * However since inserting state variables is such an expensive action (circuit optimality wise)
+		 * we need to take every optimization we can get. In this case the optimization is as follows:
+		 * If you have a set of paths that cross a parallel split-merge pair, and you decide to split
+		 * that part of the path using a state variable, then you only need to cover one branch of that
+		 * parallel split-merge pair because the value of the state variable will propagate across the
+		 * merge.
+		 *
+		 * If we didn't care about this, then we could simply create a new path for every split no matter
+		 * what kind. However to take advantage of this optimization, we want to set up the paths so they
+		 * cover every branch for every parallel split-merge pair they cross. That way the state variable
+		 * insertion algorithm can eliminate that path by only splitting one of those branches with a state
+		 * variable.
+		 *
+		 * To do this, we have groups of paths that represent different conditional branches and each path
+		 * within a group represents a parallel branch. If two or more parallel branches meet, then we merge them
+		 * and take the max of their crossing counts for each arc.
+		 */
+		for (list<path_space>::iterator exec = paths.begin(); exec != paths.end(); exec = paths.begin())
 		{
-			/* If we hit an arc that should be excluded or we
-			 * found a loop then we kill this path and move on.
-			 */
-			if (find(ex.begin(), ex.end(), path->to.front()) != ex.end() || path->nodes[path->to.front()] > 0)
-				path = result->paths.erase(path);
-			/* If we have reached one of the designated ending nodes
-			 * then we are done here and we can move on to the next path.
-			 */
-			else if (find(to.begin(), to.end(), path->to.front()) != to.end())
-				path++;
-			/* Otherwise we record this location in the path and
-			 * increment to the next set of arcs.
-			 */
-			else
+			bool done = false;
+			while (!done)
 			{
-				path->nodes[path->to.front()]++;
-
-				vector<int> n = next_arc(path->to.front());
-				for (int j = n.size()-1; j >= 0; j--)
+				done = true;
+				for (list<path>::iterator pc = exec->paths.begin(); pc != exec->paths.end(); )
 				{
-					if (j == 0)
-						path->to.front() = n[j];
-					else
+					/* If we hit an arc that should be excluded or we
+					 * found a loop then we kill this path and move on.
+					 */
+					if ((find(ex.begin(), ex.end(), pc->to.front()) != ex.end() && find(pc->from.begin(), pc->from.end(), pc->to.front()) == pc->from.end()) || pc->nodes[pc->to.front()] > 0)
+						pc = exec->paths.erase(pc);
+					/* If we have not reached one of the designated ending nodes
+					 * then we record this location in the path and
+					 * increment to the next set of arcs.
+					 */
+					else if (find(to.begin(), to.end(), pc->to.front()) == to.end())
 					{
-						result->paths.push_back(*path);
-						result->paths.back().to.front() = n[j];
+						vector<int> n = next_arc(pc->to.front());
+
+						done = false;
+						pc->nodes[pc->to.front()]++;
+
+						for (int j = n.size()-1; j >= 0; j--)
+						{
+							if (j == 0)
+								pc->to.front() = n[j];
+							else if (arcs[pc->to.front()].second.is_place())
+							{
+								int old = pc->to.front();
+								pc->to.front() = n[j];
+								paths.push_back(*exec);
+								pc->to.front() = old;
+							}
+							else
+							{
+								exec->paths.push_back(*pc);
+								exec->paths.back().to.front() = n[j];
+							}
+						}
+					}
+					else
+						pc++;
+				}
+			}
+
+			for (list<path>::iterator pc = exec->paths.begin(); pc != exec->paths.end(); pc++)
+			{
+				for (list<path>::iterator test = exec->paths.begin(); test != exec->paths.end(); )
+				{
+					if (test != pc && pc->to.front() == test->to.front())
+					{
+						for (size_t i = 0; i < pc->nodes.size() && i < test->nodes.size(); i++)
+							if (test->nodes[i] > pc->nodes[i])
+								pc->nodes[i] = test->nodes[i];
+
+						pc->from.insert(pc->from.end(), test->from.begin(), test->from.end());
+						test = exec->paths.erase(test);
+					}
+					else
+						test++;
+				}
+
+				sort(pc->from.begin(), pc->from.end());
+				pc->from.resize(unique(pc->from.begin(), pc->from.end()) - pc->from.begin());
+			}
+
+			result->paths.insert(result->paths.end(), exec->paths.begin(), exec->paths.end());
+			result->paths.sort();
+			result->paths.unique();
+
+			paths.pop_front();
+		}
+
+		result->repair();
+
+		/* Variable values aren't preserved across a conditional merge
+		 * unless the variable has the same value across all incoming
+		 * arcs on that merge. This means that we have to look for any
+		 * conditional merges that have been crossed and check to see
+		 * if the current path set covers all incoming arcs to that
+		 * merge. If the current path set doesn't, then we need to iterate
+		 * as far back down that uncovered path as we can (until we run
+		 * into a conditional split that was never merged). From there
+		 * we re-run the get paths function on those new arc indices
+		 * effectively recursing.
+		 */
+		vector<int> missed;
+		for (size_t i = 0; i < arcs.size(); i++)
+		{
+			// Is this a conditional merge? and did we cross that merge? and did we not start at that merge?
+			if (arcs[i].first.is_place() && result->coverage_count(i) > 0 && find(result->total.from.begin(), result->total.from.end(), i) == result->total.from.end())
+			{
+				vector<int> p = prev_arc(i);
+
+				if (p.size() > 1)
+				{
+					// Figure out which incoming arcs haven't been covered yet
+					// and store one that is covered in c (so we can duplicate
+					// the correct number of paths). If none of them are covered
+					// then the execution started at this merge and we don't need
+					// to do anything else.
+					for (size_t j = 0; j < p.size(); j++)
+						if (result->coverage_count(p[j]) <= 0)
+							missed.push_back(p[j]);
+				}
+			}
+		}
+
+		from = start_path(missed, ex);
+		ex.insert(ex.end(), from.begin(), from.end());
+		sort(ex.begin(), ex.end());
+		ex.resize(unique(ex.begin(), ex.end()) - ex.begin());
+	} while (from.size() > 0);
+}
+
+vector<int> petri_net::start_path(vector<int> to, vector<int> from)
+{
+	vector<vector<int> > pcs(1, to);
+
+	for (size_t i = 0; i < pcs.size(); i++)
+	{
+		bool done = false;
+		while (!done)
+		{
+			done = true;
+			for (size_t j = 0; j < pcs[i].size(); j++)
+			{
+				if (find(from.begin(), from.end(), pcs[i][j]) == from.end())
+				{
+					vector<int> p = incoming(arcs[pcs[i][j]].first);
+					vector<int> n = outgoing(arcs[pcs[i][j]].first);
+
+					vector<int> test;
+					vector<int>::iterator fn;
+					if (arcs[pcs[i][j]].first.is_place() && n.size() > 1)
+					{
+						test = n;
+						for (size_t k = 0; k < pcs[i].size(); k++)
+							if ((fn = find(test.begin(), test.end(), pcs[i][k])) != test.end())
+								test.erase(fn);
+					}
+
+					if (test.size() == 0)
+					{
+						if (n.size() > 1)
+							for (size_t k = 0; k < pcs[i].size(); )
+							{
+								if (k != j && arcs[pcs[i][k]].first == arcs[pcs[i][j]].first)
+								{
+									pcs[i].erase(pcs[i].begin() + k);
+									if (k < j)
+										j--;
+								}
+								else
+									k++;
+							}
+
+						done = false;
+
+						for (size_t k = 0; k < p.size(); k++)
+						{
+							if (k == p.size()-1)
+								pcs[i][j] = p[k];
+							else if (arcs[pcs[i][j]].first.is_trans())
+							{
+								pcs.push_back(pcs[i]);
+								pcs.back()[j] = p[k];
+							}
+							else
+								pcs[i].push_back(p[k]);
+						}
 					}
 				}
+				else
+					internal("", "start path hit boundary", __FILE__, __LINE__);
 			}
 		}
 	}
 
-	// Accumulate the resulting paths into the total count.
-	result->total.nodes.resize(arcs.size(), 0);
-	for (list<path>::iterator path = result->begin(); path != result->end(); path++)
-	{
-		result->total.from.insert(result->total.from.end(), path->from.begin(), path->from.end());
-		result->total.to.insert(result->total.to.end(), path->to.begin(), path->to.end());
-		for (size_t i = 0; i < arcs.size(); i++)
-			result->total.nodes[i] += path->nodes[i];
-	}
-	sort(result->total.from.begin(), result->total.from.end());
-	result->total.from.resize(unique(result->total.from.begin(), result->total.from.end()) - result->total.from.begin());
-	sort(result->total.to.begin(), result->total.to.end());
-	result->total.to.resize(unique(result->total.to.begin(), result->total.to.end()) - result->total.to.begin());
+	vector<int> result;
+	for (size_t i = 0; i < pcs.size(); i++)
+		result.insert(result.end(), pcs[i].begin(), pcs[i].end());
+
+	sort(result.begin(), result.end());
+	result.resize(unique(result.begin(), result.end()) - result.begin());
+
+	return result;
 }
 
 void petri_net::zero_paths(path_space *paths, petri_index from)
@@ -918,56 +1161,6 @@ void petri_net::zero_outs(path_space *paths, vector<petri_index> from)
 		for (int j = 0; j < (int)arcs.size(); j++)
 			if (arcs[j].first == from[i])
 				paths->zero(j);
-}
-
-vector<int> petri_net::start_path(int from, vector<int> ex)
-{
-	sort(ex.begin(), ex.end());
-
-	vector<int> base = vector<int>(1, from);
-	for (size_t i = 0; i < ex.size(); i++)
-	{
-		bool parallel = true;
-		for (size_t j = 0; parallel && j < base.size(); j++)
-			if (!are_parallel_siblings(arcs[ex[i]].first, arcs[base[j]].first) &&
-				!are_parallel_siblings(arcs[ex[i]].first, arcs[base[j]].second) &&
-				!are_parallel_siblings(arcs[ex[i]].second, arcs[base[j]].first) &&
-				!are_parallel_siblings(arcs[ex[i]].second, arcs[base[j]].second))
-				parallel = false;
-
-		if (parallel)
-			base.push_back(ex[i]);
-	}
-
-	vector<int> result = get_arc_cut(base, true, true);
-	vector_symmetric_compliment(&result, &ex);
-
-	return result;
-}
-
-vector<int> petri_net::start_path(vector<int> from, vector<int> ex)
-{
-	sort(ex.begin(), ex.end());
-
-	vector<int> base = from;
-	for (size_t i = 0; i < ex.size(); i++)
-	{
-		bool parallel = true;
-		for (size_t j = 0; parallel && j < base.size(); j++)
-			if (!are_parallel_siblings(arcs[ex[i]].first, arcs[base[j]].first) &&
-				!are_parallel_siblings(arcs[ex[i]].first, arcs[base[j]].second) &&
-				!are_parallel_siblings(arcs[ex[i]].second, arcs[base[j]].first) &&
-				!are_parallel_siblings(arcs[ex[i]].second, arcs[base[j]].second))
-				parallel = false;
-
-		if (parallel)
-			base.push_back(ex[i]);
-	}
-
-	vector<int> result = get_arc_cut(base, true, true);
-	vector_symmetric_compliment(&result, &ex);
-
-	return result;
 }
 
 void petri_net::check_assertions()
@@ -1190,23 +1383,9 @@ void petri_net::generate_paths(pair<int, int> *up_sense_count, vector<petri_inde
 {
 	down_paths->clear();
 	up_paths->clear();
-	vector<int> iin;
-	for (size_t j = 0; j < up_start.size(); j++)
-	{
-		vector<int> inc = incoming(up_start[j]);
-		iin.insert(iin.end(), inc.begin(), inc.end());
-	}
+	vector<int> iin = incoming(up_start);
+	vector<int> jin = incoming(down_start);
 
-
-	vector<int> jin;
-	for (size_t j = 0; j < down_start.size(); j++)
-	{
-		vector<int> inc = incoming(down_start[j]);
-		jin.insert(jin.end(), inc.begin(), inc.end());
-	}
-
-	vector<int> istart = start_path(iin, jin);
-	vector<int> jstart = start_path(jin, iin);
 	pair<int, int> swap_sense_count;
 	path_space swap_path_space(arcs.size());
 
@@ -1215,21 +1394,21 @@ void petri_net::generate_paths(pair<int, int> *up_sense_count, vector<petri_inde
 
 	if (up_sense_count->second > up_sense_count->first && down_sense_count->first > down_sense_count->second)
 	{
-		get_paths(istart, jin, up_paths);
-		get_paths(jstart, iin, down_paths);
+		get_paths(iin, jin, up_paths);
+		get_paths(jin, iin, down_paths);
 	}
 	else if (up_sense_count->first > up_sense_count->second && down_sense_count->second > down_sense_count->first)
 	{
-		get_paths(istart, jin, down_paths);
-		get_paths(jstart, iin, up_paths);
+		get_paths(iin, jin, down_paths);
+		get_paths(jin, iin, up_paths);
 		swap_sense_count = *up_sense_count;
 		*up_sense_count = *down_sense_count;
 		*down_sense_count = swap_sense_count;
 	}
 	else
 	{
-		get_paths(istart, jin, up_paths);
-		get_paths(jstart, iin, down_paths);
+		get_paths(iin, jin, up_paths);
+		get_paths(jin, iin, down_paths);
 
 		if (up_sense_count->second > up_sense_count->first && down_sense_count->second > down_sense_count->first && up_paths->length() > down_paths->length())
 		{
@@ -1375,11 +1554,12 @@ bool petri_net::solve_conflicts()
 			vector_symmetric_compliment(&uptrans, &downtrans);
 
 			if (uptrans.size() == 0 || downtrans.size() == 0)
-				error("", "no solution for the conflict set: " + to_string(i->first) + " -> " + to_string(*lj), "", __FILE__, __LINE__);
+				error("", "no solution in process '" + name + "' for the conflict set: " + to_string(i->first) + " -> " + to_string(*lj), "", __FILE__, __LINE__);
 			else if (uptrans <= downtrans)
 				ip.push_back(pair<vector<int>, vector<int> >(uptrans, downtrans));
 			else if (downtrans <= uptrans)
 				ip.push_back(pair<vector<int>, vector<int> >(downtrans, uptrans));
+			log("", "Done", __FILE__, __LINE__);
 		}
 	}
 
@@ -1502,7 +1682,18 @@ void petri_net::compact()
 
 		for (petri_index i(0, false); i < T.size();)
 		{
-			vector<petri_index> n = next(i), p = prev(i), np = prev(n), pn = next(p), nn = next(n), pp = prev(p);
+			vector<petri_index> n = next(i), p = prev(i), np = prev(n), pn = next(p), nn = next(n), pp = prev(p), ppn = next(pp), nnp = prev(nn);
+
+			/*bool forward_types_equal = true;
+			bool backward_types_equal = true;
+
+			for (size_t j = 0; forward_types_equal && j < nn.size(); j++)
+				if (at(nn[j]).active != at(i).active)
+					forward_types_equal = false;
+
+			for (size_t j = 0; backward_types_equal && j < pp.size(); j++)
+				if (at(pp[j]).active != at(i).active)
+					backward_types_equal = false;*/
 
 			if (at(i).predicate == 0 || p.size() == 0)
 			{
@@ -1516,9 +1707,14 @@ void petri_net::compact()
 				cut(i);
 				change = true;
 			}
-			else if (at(i).predicate == 1 && (pp.size() == 1 || n.size() == 1) && p.size() == 1 && pn.size() == 1)
+			else if (at(i).predicate == 1 && p.size() == 1 && pp.size() == 1 && ppn.size() == 1 && pn.size() == 1)
 			{
 				pinch_backward(i);
+				change = true;
+			}
+			else if (at(i).predicate == 1 && n.size() == 1 && nn.size() == 1 && nnp.size() == 1 && np.size() == 1)
+			{
+				pinch_forward(i);
 				change = true;
 			}
 			else
@@ -1539,6 +1735,35 @@ void petri_net::compact()
 				else
 					j++;
 			}
+	}
+
+	// Fix the conflict detection bug where if a transition has multiple ingoing and outgoing arcs
+	// and affects a channel variable, it can create an invisible conflict in the state after the
+	// transition but before the parallel split
+	change = true;
+	while (change)
+	{
+		change = false;
+		for (size_t i = 0; i < T.size(); i++)
+		{
+			size_t os = outgoing(petri_index(i, false)).size();
+			size_t is = incoming(petri_index(i, false)).size();
+			if (at(petri_index(i, false)).predicate != 1 && os > 1)
+			{
+				insert_after(petri_index(i, false), 1, true);
+				change = true;
+			}
+			else if (at(petri_index(i, false)).predicate != 1 && is > 1)
+			{
+				insert_before(petri_index(i, false), 1, true);
+				change = true;
+			}
+			else if (os > 1 && is > 1)
+			{
+				insert_after(petri_index(i, false), 1, true);
+				change = true;
+			}
+		}
 	}
 }
 
@@ -2015,7 +2240,11 @@ vector<int> petri_net::get_arc_cut(vector<int> base, bool backward, bool conditi
 
 struct place_encoding_execution
 {
-	place_encoding_execution() {}
+	place_encoding_execution()
+	{
+		net = NULL;
+		good = true;
+	}
 	place_encoding_execution(const place_encoding_execution &c)
 	{
 		good = c.good;
@@ -2311,7 +2540,7 @@ canonical petri_net::get_effective_state_encoding(vector<petri_index> state, vec
 		return encoding;
 }
 
-dot_stmt petri_net::export_dot(int t_base, int s_base, bool node_ids, bool arc_ids)
+dot_stmt petri_net::export_dot(int t_base, int s_base)
 {
 	dot_stmt stmt;
 	stmt.stmt_type = "subgraph";
@@ -2404,8 +2633,7 @@ dot_stmt petri_net::export_dot(int t_base, int s_base, bool node_ids, bool arc_i
 		for (size_t j = 0; j < S[i].assertions.size(); j++)
 			a_list.as.push_back(dot_a("assert", S[i].assertions[j].print(vars)));
 
-		if (node_ids)
-			a_list.as.push_back(dot_a("xlabel", petri_index(i + s_base, true).name()));
+		a_list.as.push_back(dot_a("xlabel", petri_index(i + s_base, true).name()));
 
 		substmt.node_ids.push_back(dot_node_id(petri_index(i + s_base, true).name()));
 		substmt.stmt_type = "node";
@@ -2429,8 +2657,7 @@ dot_stmt petri_net::export_dot(int t_base, int s_base, bool node_ids, bool arc_i
 		else
 			a_list.as.push_back(dot_a("label", "[ " + T[i].predicate.print(vars) + " ]"));
 
-		if (node_ids)
-			a_list.as.push_back(dot_a("xlabel", petri_index(i + t_base, false).name()));
+		a_list.as.push_back(dot_a("xlabel", petri_index(i + t_base, false).name()));
 
 		substmt.node_ids.push_back(dot_node_id(petri_index(i + t_base, false).name()));
 		substmt.stmt_type = "node";
@@ -2463,12 +2690,6 @@ dot_stmt petri_net::export_dot(int t_base, int s_base, bool node_ids, bool arc_i
 		substmt.node_ids.push_back(dot_node_id(a.first.name()));
 		substmt.node_ids.push_back(dot_node_id(a.second.name()));
 		substmt.stmt_type = "edge";
-
-		if (arc_ids)
-		{
-			a_list.as.push_back(dot_a("label", to_string(i)));
-			substmt.attr_list.attrs.push_back(a_list);
-		}
 
 		stmt.stmt_list.stmts.push_back(substmt);
 	}

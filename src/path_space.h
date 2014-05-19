@@ -30,13 +30,19 @@ struct path_space
 	list<path>::iterator begin();
 	list<path>::iterator end();
 	void clear();
-	void inc(int i);
+
 	void zero(int i);
 	void zero(vector<int> i);
-	void sub(int i, int v);
+	void inc(int i, int v = 1);
+	void dec(int i, int v = 1);
+	void inc(list<path>::iterator i, int j, int v = 1);
+	void dec(list<path>::iterator i, int j, int v = 1);
+
+	void repair();
 
 	int coverage_count(int n);
 	int coverage_count(vector<int> n);
+
 	int length();
 	vector<int> coverage_maxes();
 	int coverage_max();

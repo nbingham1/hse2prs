@@ -94,7 +94,7 @@ digraph model
 	}
 	subgraph environment
 	{
-		graph["label"="" "variables"="L.r.t,L.r.f,L.a,R.r.t,R.r.f,R.a,_var0.t,_var0.f,_var1.t,_var1.f" "type"="remote" "elaborate"="false" "reset"="~L.r.t&~L.r.f&~L.a&~R.r.t&~R.r.f&~R.a&~i.t&~i.f"];
+		graph["label"="" "variables"="L.r.t,L.r.f,L.a,R.r.t,R.r.f,R.a,_var0.t,_var0.f,_var1.t,_var1.f" "type"="remote" "elaborate"="false" "reset"="~L.r.t&~L.r.f&~L.a&~R.r.t&~R.r.f&~R.a"];
 		S20["shape"="circle" "width"="0.15" "peripheries"="2" "style"="filled" "fillcolor"="#000000" "label"=""];
 		T22["shape"="plaintext" "label"="1"];
 		S20->T22;
