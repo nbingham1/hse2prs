@@ -1,0 +1,77 @@
+\section{State Elaboration}
+
+\subsection{The basics}
+
+The state elaboration algorithm at its core is just a full exploration of all possible executions of a set of petri nets.
+
+\begin{definition}
+A \textbf{program counter} is a token and a boolean minterm that represents a set of state encodings.
+\end{definition}
+
+\begin{definition}
+A \textbf{program state} is a set of program counters such that their tokens form a state across all petri nets in the execution.
+\end{definition}
+
+\begin{definition}
+An \textbf{execution} is a single trace of a program state through the set of petri nets.
+\end{definition}
+
+The elaboration algorithm consists of a set of executions $E$ initialized with one execution at the reset state. Given the set of transitions $T$ which are allowed to fire given the current program state of an execution $E_i \in E$, $E_i$ is duplicated into a set $E_i \subset E$ of $|T|$ executions equivalent to the original $E_i$. For each of the executions $E_{i_j} \in E_i$, the transition $T_j$ fires. If $T_j$ is passive and has multiple minterms that are allowed to fire, then the execution $E_{i_j}$ will be duplicated again into a set $E_{i_j} \subset E_i$ of executions with one execution $E_{i_{j_k}}$ for every minterm $T_{j_k} \in T_j$. The set of program counters, $PC$, that enable $T_{j_k}$ are merged into one, such that it's minterm is:
+
+\begin{align}
+\bigwedge_{PC_i \in PC} PC_i
+\end{align}
+
+Then the minterm of that program counter, $PC$, will be modified to apply the transition:
+
+\begin{itemize}
+\item $T_j$ is passive: $PC = PC \wedge T_{j_k}$
+\item $T_j$ is active: $PC = PC \rightarrow T_j$
+\end{itemize}
+
+If $T_j$ is active, then the minterm of all of the other program counters, $PC_x$, in the execution are modified to include the transition event:
+
+\begin{align}
+PC_x = PC_x \vee (PC_x \rightarrow T_j)
+\end{align}
+
+Finally, $PC$ will be duplicated to all of the output places of $T_j$.
+
+Every time a program counter $PC$ passes over a place $P$, the minterm of that program counter is ORed into the predicate of that place: $P = P \vee PC$. This creates the predicates for all of the places.
+
+\begin{definition}
+A \textbf{half synchronization} event is where a set of program counters $C$ must wait at an enabled passive transition $T_p$ until the program state $S \supset C$ has fired an active transition $T_a$ that fills the condition for $T_p$ and allows it to fire. It is a directional guarantee that if $T_p$ has fired, then the program state has passed the transition $T_a$.
+\end{definition}
+
+\begin{definition}
+A \textbf{full synchronization} event consists of two opposing half synchronization events, guaranteeing that if one set of program counters $C_0$ in the program state $S$ has passed a set of transitions $T_0$, then another set of program counters $C_1$ in the program state $S$ has also passed a set of transitions $T_1$.
+\end{definition}
+
+\begin{lemma}
+Parallel composition of two places $P_0$ and $P_1$ structurally does not imply that a state $S$ exists such that both $P_0$ and $P_1$ are in $S$.
+
+It is possible for a half synchronization event to guarantee that if a program counter is at $P_1$, then another program counter must have already passed $P_0$.
+\end{lemma}
+
+\begin{lemma}
+Given a place $P$ and the set of states $S$ that contain $P$:
+\begin{align}
+P = \bigvee_{S_i \in S} S_i
+\end{align}
+
+%For the purpose of this proof, since a passive transition doesn't actively change the value assignment of a variable, all passive transitions may be collapsed and ignored, the input and output places of which are merged.
+By Construction.
+\end{lemma}
+
+\subsection{Early exit}
+
+Given two partial executions $E_0$ and $E_1$ for which different choices were made for ordering of events or for conditional splits, if they end up at the same program state after all of those choices, then one of those executions may be dropped and only one needs to continue.
+
+\subsection{Scheduling for fast early exit}
+
+
+
+\subsection{Scheduling for memory management}
+
+\subsection{Independant Parallelism}
+

@@ -1,0 +1,162 @@
+\section{Effective Predicate}
+
+\subsection{Why not just a special case}
+
+During channel reset when all data lines are being cleared, all of those transitions are possibly vacuous. When combined with the Guard before it which is always at least possibly vacuous, you can start to get some decently complicated structures in the simplest of processes. For example, every reshuffling for a one bit fifo process already has a possibly vacuous set of transitions composed in a combination of parallel and sequence. In these examples I will only highlight the more complicated structures.
+
+\begin{lstlisting}[caption={PCHB One Bit FIFO}]
+$*[$
+  $[\ R.e \wedge L.t \rightarrow R.t\uparrow$
+  $[] R.e \wedge L.f \rightarrow R.f\uparrow$
+  $]; L.e\downarrow; \pmb{[\neg R.e]; R.t\downarrow, R.f\downarrow; [\neg L.t \wedge \neg L.f]}; L.e\uparrow$
+ $]$
+\end{lstlisting}
+
+\begin{lstlisting}[caption={WCHB One Bit FIFO}]
+$*[$
+  $[\ R.e \wedge L.t \rightarrow R.t\uparrow$
+  $[] R.e \wedge L.f \rightarrow R.f\uparrow$
+  $]; L.e\downarrow; \pmb{[\neg R.e \wedge \neg L.t \wedge \neg L.f]; R.t\downarrow, R.f\downarrow}; L.e\uparrow$
+ $]$
+\end{lstlisting}
+
+\begin{lstlisting}[caption={PCFB One Bit FIFO}]
+$*[$
+  $[\ R.e \wedge L.t \rightarrow R.t\uparrow$
+  $[] R.e \wedge L.f \rightarrow R.f\uparrow$
+  $]; L.e\downarrow; en\downarrow;$
+  $($
+   $\pmb{[\neg R.e \rightarrow R.t\downarrow, R.f\downarrow]} ||$
+   $[\neg L.t \wedge \neg L.f \rightarrow L.e\uparrow]$
+  $); en\uparrow$ 
+ $]$
+\end{lstlisting}
+
+Now you start to introduce things like skips into the HSE and the problem gets much worse. Here is the HSE for a pcfb reshuffling of a constant time accumulator process:
+
+\begin{lstlisting}[caption={PCFB One Bit Constant Time Accumulator}]
+$*[$
+  $[\ D.e \wedge A.f \wedge B.f \rightarrow D.f\uparrow$
+  $[] D.e \wedge A.f \wedge B.t \rightarrow D.t\uparrow$
+  $[] \pmb{A.t \rightarrow skip}$
+  $] ||$
+  $[\ S.e \wedge A.f \rightarrow S.f\uparrow$
+  $[] S.e \wedge A.t \wedge B.t \rightarrow S.t\uparrow$
+  $[] \pmb{A.t \wedge B.f \rightarrow skip}$
+  $] ||$
+  $[\ A.e \wedge (A.f \vee A.t \wedge B.t) \rightarrow T.f\uparrow$
+  $[] A.e \wedge A.t \wedge B.f \rightarrow T.t\uparrow$
+  $] ||$
+  $[\ Ne \wedge (A.t \wedge B.f) \rightarrow Nr\uparrow$
+  $[] \pmb{A.f \vee B.t \rightarrow skip}$
+  $];$
+  $A.e\downarrow; en\uparrow;$
+  $($
+   $[\neg A.f \wedge \neg A.t \rightarrow A.e\uparrow] ||$
+   $[\ \pmb{(D.f \vee D.t) \wedge \neg D.e \rightarrow D.f\downarrow, D.t\downarrow}$
+   $[] \pmb{\neg D.f \wedge \neg D.t \rightarrow skip}$
+   $] ||$
+   $[\ \pmb{(S.f \vee S.t) \wedge \neg S.e \rightarrow S.f\downarrow, S.t\downarrow}$
+   $[] \pmb{\neg S.f \wedge \neg S.t \rightarrow skip}$
+   $] ||$
+   $[\ Nr \wedge \neg Ne \rightarrow Nr\downarrow$
+   $[] \pmb{\neg Nr \rightarrow skip}$
+   $] ||$
+   $[\ T.f \rightarrow B.t\downarrow; B.f\uparrow; T.f\downarrow$
+   $[] T.t \rightarrow B.f\downarrow; B.t\uparrow; T.t\downarrow$
+   $]$
+  $)$
+ $]$
+\end{lstlisting}
+
+\subsection{Current Implementation}
+
+Given a marking $M_0$ such that there is at least one token on every input place of a group of transitions $T$ and every transition $T_i \in T$ is vacuous for that marking's state encoding, and a marking $M_1$ that is equal to $M_0$ after all of the transitions $T_i \in T$ have fired, $M_0$ is equivalent to $M_1$. This means that when searching for conflicting markings, $M_0$ cannot conflict with $M_1$. 
+
+\begin{definition}
+The \textbf{effective predicate} is a restriction of the predicate of a state $S_0$ relative to another state of places $S_1$ that removes the state encodings from $S_0$ for which all transitions between $S_0$ and $S_1$ are vacuous.
+\end{definition}
+
+\begin{definition}
+The \textbf{effective restriction} is the restriction placed on the predicate of a state in order to get the effective predicate: $effective(S_0, S_1) = S_0 \wedge restrict(S_0, S_1)$
+\end{definition}
+
+\begin{lemma}
+Given two partial states $S_0$ and $S_1$ and a set of transitions $T$ from $S_0$ to $S_1$ in parallel or sequence, the effective restriction from $S_0$ to $S_1$ is:
+\begin{align}
+restrict(S_0, S_1) = \bigvee_{T_i \in T} \neg T_i
+\end{align}
+If a state encoding in $S_0$ causes all of transtions in $T$ to be vacuous, then that state encoding should also be in $S_1$. This state encoding should be ignored since the transitions for which $S_1$ is an implicant are allowed to fire in that case. This means that in order for a state encoding to not be ignored, at least one of the transitions in $T$ must be non-vacuous.
+\end{lemma}
+
+\begin{lemma}
+Given two partial states $S_0$ and $S_1$ such that there are multiple conditional branches $B$ from $S_0$ to $S_1$, the effective restriction from $S_0$ to $S_1$ across all branches is:
+\begin{align}
+restrict(S_0, S_1) = \bigwedge_{B_i \in B} restrict(S_0, S_1, B_i)
+\end{align}
+Since there are multiple conditional branches that could be taken in order to get from $S_0$ to $S_1$, then at least one transition in each branch must be non-vacuous given a state encoding in $S_0$ for that state encoding to not also show up in $S_1$ as a valid implicant for the transitions after $S_1$. If all of the transitions down one of the branches were vacuous then that branch was taken and the transitions for which $S_1$ is an implicant are allowed to fire.
+\end{lemma}
+
+Given two partial states with a set of transitions $T$, if $T$ has a pair of transitions in different directions on the same variable, then the restriction comes out to $1$ meaning that there are no state encodings that we can throw away. If all of the transitions in $T$ are definitly vacuous, then the restriction will come out to $0$ meaning we can completely ignore that entire state. If all of the transitions in $T$ are non-vacuous, then the state encoding will fit perfectly within the restriction, having the same effect as a restriction of $1$.
+
+\subsection{What I think is missing}
+
+I am missing some kind of interaction with the environment. If we look at a simple one bit pcfb fifo:
+
+\begin{lstlisting}[caption={PCFB One Bit FIFO}]
+$*[$
+  $[\ R.e \wedge L.t \rightarrow R.t\uparrow$
+  $[] R.e \wedge L.f \rightarrow R.f\uparrow$
+  $]; L.e\downarrow; en\downarrow;$
+  $($
+   $\mathbf{A} [\neg R.e \rightarrow R.t\downarrow, R.f\downarrow] ||$
+   $[\neg L.t \wedge \neg L.f \rightarrow L.e\uparrow] \mathbf{A}$
+  $)\mathbf{B}; en\uparrow$ 
+ $]$
+\end{lstlisting}
+
+Using the current implementation, the effective restriction from the state $A$ to the state $B$ comes out to be $R.f \vee R.t \vee R.e$. However, at $B$, the environment is allowed to change the value of $R.e$. This means that the transition on $R.e$ cannot be used in the effective restriction calculation. The effective restriction should really be $1$. 
+
+\subsection{Alternative Method}
+
+If a state encoding in $S$ enables a transition $T$, then that state encoding is a duplicate of a state encoding that was really just passing through on its way to the next state.
+
+\begin{definition}
+The \textbf{effective predicate} of a state $S$ is a restriction of the predicate that removes the state encodings for which any transition in the set of enabled output transitions of $S$, $T$, is vacuous.
+\begin{align}
+effective(S) = S \wedge \bigwedge_{T_i \in T} \neg T_i
+\end{align}
+\end{definition}
+
+\begin{definition}
+The \textbf{effective predicate} of a partial state $S_p$ representing the set of states $S$ is:
+\begin{align}
+effective(S_p) = \bigvee_{S_i \in S} effective(S_i)
+\end{align}
+\end{definition}
+
+\begin{lemma}
+Given the set of states $S$ for which $S_p$ is a partial state and $S_{np}$ is a set of partial states such that each partial state $S_{npi} \in S_{np}$ contains the places in $S_i$ and not $S_p$, the set of enabled output transitions $T_i$ of $S_i \in S$, $T_p$ of $S_p$, $T_{npi}$ of $S_{npi} \in S_{np}$, and $T_{ni}$ such that $T_{ni} \subset T_i$ but $T_{ni} \cap (T_p \cup T_{npi}) = \emptyset$.
+
+\begin{align}
+effective(S_p) &= \bigvee_{S_i \in S} effective(S_i) \\
+&= \bigvee_{S_i \in S} \bigg( S_i \wedge \bigwedge_{T_{ij} \in T_i} \neg T_{ij} \bigg) \\
+&= \bigvee_{S_{npi} \in S_{np}} \bigg( S_p \wedge S_{npi} \wedge \bigg( \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg) \wedge \bigg( \bigwedge_{T_{npij} \in T_{npi}} \neg T_{npij} \bigg) \wedge \bigg( \bigwedge_{T_{nij} \in T_{ni}} \neg T_{nij} \bigg) \bigg) \\
+&= \bigg( S_p \wedge \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg) \wedge \bigvee_{S_{npi} \in S_{np}} \bigg( \bigg( S_{npi} \wedge \bigwedge_{T_{npij} \in T_{npi}} \neg T_{npij} \bigg) \wedge \bigwedge_{T_{nij} \in T_{ni}} \neg T_{nij} \bigg) \\
+&\subseteq \bigg( S_p \wedge \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg)
+\end{align}
+\end{lemma}
+
+\begin{definition}
+The \textbf{effective predicate} of a partial state $S_p$ given its output transitions $T$ and the set of states for which one of those transitions have fired $S_o$:
+
+\begin{align}
+effective(S_p) = S_p \wedge \bigwedge_{S_{oi} \in S_o} \neg S_{oi}
+\end{align}
+
+
+
+\end{definition}
+
+The reason for using the output partial states instead of the output transitions in this definition is because of parallel merges. Given a set of states $S$ represented by the partial state $S_p$ such that states exists that both enable and don't enable a parallel merge transition $T$, then $T$ is only vacuous some of the time given $S_p$. So it would be wrong to restrict the predicate of $S_p$ using $\neg T$ because that could cut out state encodings for which $T$ is not enabled. However if we instead look at the output partial states, we cannot eliminate a state encoding for which $T$ was not actually vacuous because a state encoding will only exist in the predicate of an output partial state if $T$ was enabled and fired.
+

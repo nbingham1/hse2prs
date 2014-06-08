@@ -1,0 +1,44 @@
+\section{Checking for Conflicts}
+
+\subsection{Conflicting States}
+
+\begin{definition}
+A state $S_0$ with output transitions $T_0$ is \textbf{indistinguishable} from a state $S_1$ with output transitions $T_1$ for an active transition $T_{0_i} \in T_0$ given the following conditions:
+\begin{itemize}
+\item $S_0$ and $S_1$ are not the same state.
+\item $effective(S_1) \wedge hide(S_0, T_{0_i}) \ne 0$
+\end{itemize}
+\end{definition}
+
+We need to look at the effective predicate of $S_1$ to eliminate any cases where all of the transitions in between $S_1$ and $S_0$ are vacuous, and we need to hide the node affected by the active transition from the predicate of $S_0$ because we cannot use that node to create a production rule for that transition.
+
+\begin{definition}
+A state $S_0$ with output transitions $T_0$ \textbf{conflicts} with a state $S_1$ with output transitions $T_1$ for an active transition $T_{0_i} \in T_0$ given the following conditions:
+\begin{itemize}
+\item $S_0$ and $S_1$ are indistinguishable.
+\item $T_{0_i}$ is not a vacuous transition for the state $S_1$.
+\item There is no transition $T_{1_j} \in T_1$ such that $T_{1_j} = T_{0_i}$.
+\end{itemize}
+\end{definition}
+
+\subsection{An Optimization: Conflicting Places}
+
+We can bring the conflict check from $O(k^{2n})$ down to $O(n^2)$ where $n$ is the number of places by taking advantage of some simple properties.
+
+\begin{definition}
+A place $P_0$ with output transitions $T_0$ is \textbf{indistinguishable} from a place $P_1$ with output transitions $T_1$  for an active transition $T_{0_i} \in T_0$ given the following conditions:
+\begin{itemize}
+\item $P_0$ and $P_1$ are not the same place.
+\item $P_0$ and $P_1$ are not in parallel.
+\item $effective(P_1) \wedge hide(P_0, T_{0_i}) \ne 0$
+\end{itemize}
+\end{definition}
+
+\begin{definition}
+A place $P_0$ with output transitions $T_0$ \textbf{conflicts} with a place $P_1$ with output transitions $T_1$ for an active transition $T_{0_i} \in T_0$ given the following conditions:
+\begin{itemize}
+\item $P_0$ and $P_1$ are indistinguishable.
+\item $T_{0_i}$ is not a vacuous transition for the place $P_1$.
+\item There is no transition $T_{1_j} \in T_1$ such that $T_{1_j} = T_{0_i}$.
+\end{itemize}
+\end{definition}

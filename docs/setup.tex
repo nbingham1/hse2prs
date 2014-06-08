@@ -1,0 +1,62 @@
+% Packages
+\usepackage{cite}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{stmaryrd}
+\usepackage{mathpartir}
+\usepackage{fancyvrb}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{units}
+\usepackage{pgfplots}
+\usepackage{listings}
+
+\definecolor{light-gray}{gray}{0.95}
+
+\lstset{%
+basicstyle=\small,
+backgroundcolor=\color{light-gray},
+mathescape=true}
+
+% Set up Tikz and it's libraries
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric}
+\usetikzlibrary{decorations.pathmorphing}
+\usetikzlibrary{shapes.gates.logic.US,shapes.gates.logic.IEC,calc}
+\usetikzlibrary{calc}
+\usetikzlibrary{positioning}
+\usetikzlibrary{arrows}
+\usetikzlibrary{shapes}
+
+%
+% Simplify a few commands, for the lazy
+%
+
+\newcommand{\red}{\color{red}}
+\newcommand{\blue}{\color{blue}}
+
+%
+% Environments: theorem, lemma, corollary, definition, example, proof
+%
+
+\newcounter{definition}
+\setcounter{definition}{0}
+\newenvironment{definition}{\par
+\refstepcounter{definition}\vspace{1ex}\noindent{\sc Definition \thedefinition:}\sl }{\vspace{1ex}}
+
+\newcounter{lemma}
+\setcounter{lemma}{0}
+\newenvironment{lemma}{\par
+\refstepcounter{lemma}\vspace{1ex}\noindent{\sc Lemma \thelemma:}\it }{\par}
+
+\newcounter{theorem}
+\setcounter{theorem}{0}
+\newenvironment{theorem}{\par
+\refstepcounter{theorem}\vspace{1ex}\noindent{\sc Theorem \thetheorem:}\it }{\par}
+
+\newcounter{example}
+\setcounter{example}{0}
+\newenvironment{example}{\par
+\refstepcounter{example}\vspace{1ex}\noindent{\bf Example \theexample:} }{
+\vspace{1ex}}
