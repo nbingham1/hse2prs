@@ -12,6 +12,7 @@
 #include "canonical.h"
 #include "petri.h"
 
+struct process;
 struct remote_program_counter;
 
 /**
@@ -30,10 +31,9 @@ struct remote_program_counter;
 struct program_counter
 {
 	program_counter();
-	program_counter(string name, bool elaborate, petri_index index, petri_net *net);
+	program_counter(petri_net *net, petri_index index, bool elaborate);
 	~program_counter();
 
-	string name;
 	petri_net *net;
 	petri_index index;
 	minterm state;
@@ -73,10 +73,9 @@ typedef pair<remote_petri_index, remote_petri_index> remote_petri_arc;
 struct remote_program_counter
 {
 	remote_program_counter();
-	remote_program_counter(string name, petri_net *net);
+	remote_program_counter(petri_net *net);
 	~remote_program_counter();
 
-	string name;
 	petri_net* net;
 	vector<remote_petri_index> begin;
 	vector<remote_petri_index> end;
@@ -126,8 +125,8 @@ struct program_execution
 	int count(size_t pci);
 	int merge(size_t pci);
 
-	void init_pcs(string name, petri_net *net, bool elaborate);
-	void init_rpcs(string name, petri_net *net);
+	void init_pcs(petri_net *net, bool elaborate);
+	void init_rpcs(petri_net *net);
 
 	program_execution &operator=(program_execution e);
 };
@@ -135,28 +134,22 @@ struct program_execution
 struct program_execution_space
 {
 	list<program_execution> execs;
-	vector<petri_net*> nets;
-	map<pair<pair<string, petri_net*>, pair<string, petri_net*> >, vector<pair<size_t, size_t> > > translations;
-	vector<string> instabilities;
 
 	void duplicate_execution(program_execution *exec_in, program_execution **exec_out);
 	void duplicate_counter(program_execution *exec_in, size_t pc_in, size_t &pc_out);
 	bool remote_end_ready(program_execution *exec, size_t rpc, size_t &idx, vector<petri_index> &outgoing, minterm state);
 	bool remote_begin_ready(program_execution *exec, size_t rpc, size_t &idx, minterm state);
-	void full_elaborate();
+	void full_elaborate(process *proc);
 	void reset();
-	void gen_translation(string name0, petri_net *net0, string name1, petri_net *net1);
-	minterm translate(string name0, petri_net *net0, minterm t, string name1, petri_net *net1);
 };
 
 struct program_index
 {
 	program_index();
-	program_index(string name, petri_net *net, petri_index index, minterm encoding);
+	program_index(petri_net *net, petri_index index, minterm encoding);
 	program_index(const program_index &i);
 	~program_index();
 
-	string name;
 	petri_net *net;
 	petri_index index;
 	minterm encoding;

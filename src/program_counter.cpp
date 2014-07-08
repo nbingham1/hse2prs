@@ -9,6 +9,7 @@
 #include "petri.h"
 #include "variable_space.h"
 #include "message.h"
+#include "process.h"
 
 program_counter::program_counter()
 {
@@ -16,9 +17,8 @@ program_counter::program_counter()
 	elaborate = false;
 }
 
-program_counter::program_counter(string name, bool elaborate, petri_index index, petri_net *net)
+program_counter::program_counter(petri_net *net, petri_index index, bool elaborate)
 {
-	this->name = name;
 	this->net = net;
 	this->index = index;
 	this->n = net->next(index);
@@ -87,20 +87,19 @@ void program_counter::set(minterm term)
 
 bool operator==(program_counter p1, program_counter p2)
 {
-	return p1.name == p2.name && p1.net == p2.net && p1.index == p2.index;
+	return p1.net == p2.net && p1.index == p2.index;
 }
 
 bool operator<(program_counter p1, program_counter p2)
 {
-	return ((p1.name < p2.name) ||
-			(p1.name == p2.name && p1.net < p2.net) ||
-			(p1.name == p2.name && p1.net == p2.net && p1.index < p2.index) ||
-			(p1.name == p2.name && p1.net == p2.net && p1.index == p2.index && p1.state < p2.state));
+	return ((p1.net < p2.net) ||
+			(p1.net == p2.net && p1.index < p2.index) ||
+			(p1.net == p2.net && p1.index == p2.index && p1.state < p2.state));
 }
 
 ostream &operator<<(ostream &os, program_counter p)
 {
-	os << p.net->name << ":" << p.name << ":" << p.index;
+	os << p.net->name << ":" << p.index;
 	return os;
 }
 
@@ -140,7 +139,7 @@ remote_program_counter::remote_program_counter()
 	net = NULL;
 }
 
-remote_program_counter::remote_program_counter(string name, petri_net *net)
+remote_program_counter::remote_program_counter(petri_net *net)
 {
 	this->place_iteration.resize(net->S.size(), 0);
 	this->trans_iteration.resize(net->T.size(), pair<int, int>(0, 0));
@@ -148,7 +147,6 @@ remote_program_counter::remote_program_counter(string name, petri_net *net)
 	for (petri_index i(0, false); i < net->T.size(); i++)
 		this->input_size[i.idx()] = net->incoming(i).size();
 
-	this->name = name;
 	this->net = net;
 	for (size_t i = 0; i < net->M0.size(); i++)
 	{
@@ -320,7 +318,6 @@ canonical remote_program_counter::waits(remote_petri_index n)
 
 remote_program_counter &remote_program_counter::operator=(remote_program_counter pc)
 {
-	name = pc.name;
 	net = pc.net;
 	begin = pc.begin;
 	end = pc.end;
@@ -333,7 +330,7 @@ remote_program_counter &remote_program_counter::operator=(remote_program_counter
 
 ostream &operator<<(ostream &os, remote_program_counter p)
 {
-	os << p.net->name << ":" << p.name << ":(" << p.begin << "=>" << p.end << ")";
+	os << p.net->name << ":(" << p.begin << "=>" << p.end << ")";
 	return os;
 }
 
@@ -388,15 +385,15 @@ int program_execution::merge(size_t pci)
 	return pci;
 }
 
-void program_execution::init_pcs(string name, petri_net *net, bool elaborate)
+void program_execution::init_pcs(petri_net *net, bool elaborate)
 {
 	for (size_t k = 0; k < net->M0.size(); k++)
-		pcs.push_back(program_counter(name, elaborate, net->M0[k], net));
+		pcs.push_back(program_counter(net, net->M0[k], elaborate));
 }
 
-void program_execution::init_rpcs(string name, petri_net *net)
+void program_execution::init_rpcs(petri_net *net)
 {
-	rpcs.push_back(remote_program_counter(name, net));
+	rpcs.push_back(remote_program_counter(net));
 }
 
 program_execution &program_execution::operator=(program_execution e)
@@ -505,53 +502,27 @@ bool program_execution_space::remote_begin_ready(program_execution *exec, size_t
 	return false;
 }
 
-void program_execution_space::full_elaborate()
+void program_execution_space::full_elaborate(process *proc)
 {
-	string start_statement = "elaborating {";
-	translations.clear();
-
-	bool first = true;
+	// Figure out the collective reset state
 	for (list<program_execution>::iterator exec = execs.begin(); exec != execs.end(); exec++)
 	{
 		for (vector<program_counter>::iterator pc = exec->pcs.begin(); pc != exec->pcs.end(); pc++)
 		{
-			if (pc->elaborate && find(nets.begin(), nets.end(), pc->net) == nets.end())
-			{
-				pc->net->parallel_nodes.clear();
-				nets.push_back(pc->net);
-				if (!first)
-					start_statement += ", ";
-				start_statement += pc->net->name;
-				first = false;
-			}
-
 			for (vector<program_counter>::iterator pcj = exec->pcs.begin(); pcj != exec->pcs.end(); pcj++)
-				if (pcj != pc && (pcj->net != pc->net || pcj->name != pc->name))
-				{
-					gen_translation(pcj->name, pcj->net, pc->name, pc->net);
-					pc->set(translate(pcj->name, pcj->net, pcj->state, pc->name, pc->net));
-				}
+				if (pcj != pc && pcj->net != pc->net)
+					pc->set(proc->translate(pcj->state, pcj->net, pc->net));
 
 			for (vector<remote_program_counter>::iterator pcj = exec->rpcs.begin(); pcj != exec->rpcs.end(); pcj++)
-			{
-				gen_translation(pcj->name, pcj->net, pc->name, pc->net);
-				gen_translation(pc->name, pc->net, pcj->name, pcj->net);
 				if (pcj->net->reset.terms.size() > 0)
-					pc->set(translate(pcj->name, pcj->net, pcj->net->reset.terms.front(), pc->name, pc->net));
-			}
+					pc->set(proc->translate(pcj->net->reset.terms.front(), pcj->net, pc->net));
 		}
 	}
-
-	start_statement += "}";
-	log("", start_statement, __FILE__, __LINE__);
-
-	for (vector<petri_net*>::iterator net = nets.begin(); net != nets.end(); net++)
-		for (size_t i = 0; i < (*net)->S.size(); i++)
-			(*net)->S[i].predicate = canonical(0);
 
 	int number_processed = 0;
 	int max_width = 0;
 	list<program_state> observed_states;
+	vector<string> instabilities;
 	while (execs.size() > 0)
 	{
 		if ((int)execs.size() > max_width)
@@ -566,9 +537,9 @@ void program_execution_space::full_elaborate()
 			name = exec->pcs[0].net->name;
 
 		if (get_verbose())
-			log("", name + ": execution " + to_string(number_processed) + " " + to_string(execs.size()), __FILE__, __LINE__);
+			log("", name + " -- elaborate: execution " + to_string(number_processed) + "/" + to_string(execs.size()), __FILE__, __LINE__);
 		else if (500*(int)(number_processed/500) == number_processed)
-			progress("", name + ": execution " + to_string(number_processed) + " " + to_string(execs.size()), __FILE__, __LINE__);
+			progress("", name + " -- elaborate: execution " + to_string(number_processed) + "/" + to_string(execs.size()), __FILE__, __LINE__);
 
 		while (!exec->done && !exec->deadlock)
 		{
@@ -579,7 +550,7 @@ void program_execution_space::full_elaborate()
 			{
 				minterm state;
 				for (size_t i = 0; i < exec->pcs.size(); i++)
-					state &= translate(exec->pcs[i].name, exec->pcs[i].net, exec->pcs[i].state, exec->rpcs[pc].name, exec->rpcs[pc].net);
+					state &= proc->translate(exec->pcs[i].state, exec->pcs[i].net, exec->rpcs[pc].net);
 
 				size_t idx = 0;
 				vector<petri_index> outgoing;
@@ -654,7 +625,7 @@ void program_execution_space::full_elaborate()
 
 			for (size_t j = 0; j < exec->rpcs.size(); j++)
 				for (size_t i = 0; i < exec->pcs.size(); i++)
-					exec->pcs[i].apply(translate(exec->rpcs[j].name, exec->rpcs[j].net, exec->rpcs[j].firings(), exec->pcs[i].name, exec->pcs[i].net));
+					exec->pcs[i].apply(proc->translate(exec->rpcs[j].firings(), exec->rpcs[j].net, exec->pcs[i].net));
 
 			sort(exec->pcs.begin(), exec->pcs.end());
 
@@ -665,7 +636,7 @@ void program_execution_space::full_elaborate()
 			 */
 			for (size_t i = 0; i < exec->pcs.size(); i++)
 				for (size_t j = i+1; j < exec->pcs.size(); j++)
-					if (exec->pcs[i].name == exec->pcs[j].name && exec->pcs[i].net == exec->pcs[j].net && exec->pcs[i].index != exec->pcs[j].index)
+					if (exec->pcs[i].net == exec->pcs[j].net && exec->pcs[i].index != exec->pcs[j].index)
 					{
 						pair<petri_index, petri_index> para(exec->pcs[i].index, exec->pcs[j].index);
 						list<pair<petri_index, petri_index> >::iterator lb = lower_bound(exec->pcs[i].net->parallel_nodes.begin(), exec->pcs[i].net->parallel_nodes.end(), para);
@@ -697,7 +668,7 @@ void program_execution_space::full_elaborate()
 				 */
 				for (size_t ps = 0, pe = 0; ps < exec->pcs.size(); ps = pe)
 				{
-					for (; pe < exec->pcs.size() && exec->pcs[pe].name == exec->pcs[ps].name && exec->pcs[pe].net == exec->pcs[ps].net; pe++);
+					for (; pe < exec->pcs.size() && exec->pcs[pe].net == exec->pcs[ps].net; pe++);
 
 					/* Get the list of transitions that we suspect could become enabled
 					 * at this state in this particular process.
@@ -837,7 +808,7 @@ void program_execution_space::full_elaborate()
 							texec->pcs[ready_transitions[i]].state = texec->pcs[ready_transitions[i]].state >> passing[i][j[i]];
 							for (size_t apc = 0; apc < texec->pcs.size(); apc++)
 								if (apc != ready_transitions[i])
-									texec->pcs[apc].apply(translate(texec->pcs[ready_transitions[i]].name, texec->pcs[ready_transitions[i]].net, passing[i][j[i]], texec->pcs[apc].name, texec->pcs[apc].net));
+									texec->pcs[apc].apply(proc->translate(passing[i][j[i]], texec->pcs[ready_transitions[i]].net, texec->pcs[apc].net));
 						}
 						else
 							texec->pcs[ready_transitions[i]].state &= passing[i][j[i]];
@@ -895,11 +866,31 @@ void program_execution_space::full_elaborate()
 					sort(moving.begin(), moving.end());
 					moving.resize(unique(moving.begin(), moving.end()) - moving.begin());
 
+					list<petri_net*> covered_nets;
 					for (size_t i = 0; i < moving.size(); i++)
 						if (exec->pcs[moving[i]].elaborate)
 						{
 							exec->pcs[moving[i]].net->at(exec->pcs[moving[i]].index).predicate.push_back(exec->pcs[moving[i]].state);
 							exec->pcs[moving[i]].net->at(exec->pcs[moving[i]].index).predicate.mccluskey_or(exec->pcs[moving[i]].net->at(exec->pcs[moving[i]].index).predicate.terms.size()-1);
+
+							if (find(covered_nets.begin(), covered_nets.end(), exec->pcs[moving[i]].net) == covered_nets.end())
+							{
+								canonical effective;
+								effective.terms.push_back(minterm());
+								for (size_t j = 0; j < exec->pcs.size(); j++)
+									if (exec->pcs[j].net == exec->pcs[moving[i]].net)
+										effective.terms[0] &= exec->pcs[j].state;
+
+								for (size_t j = 0; j < ready_places.size(); j++)
+									if (exec->pcs[ready_places[j].second[0]].net == exec->pcs[moving[i]].net)
+										effective &= ~exec->pcs[moving[i]].net->at(ready_places[j].first).predicate;
+
+								for (size_t j = 0; j < exec->pcs.size(); j++)
+									if (exec->pcs[j].net == exec->pcs[moving[i]].net)
+										exec->pcs[j].net->at(exec->pcs[j].index).effective |= effective;
+
+								covered_nets.push_back(exec->pcs[moving[i]].net);
+							}
 						}
 
 					if (ready_places.size() > 1)
@@ -912,7 +903,6 @@ void program_execution_space::full_elaborate()
 					for (size_t i = 0; i < ready_places.size(); i++)
 						for (size_t j = i+1; j < ready_places.size(); j++)
 							if (exec->pcs[ready_places[i].second.front()].net == exec->pcs[ready_places[j].second.front()].net &&
-								exec->pcs[ready_places[i].second.front()].name == exec->pcs[ready_places[j].second.front()].name &&
 								ready_places[i].second != ready_places[j].second)
 
 								for (size_t k = 0; k < ready_places[i].second.size(); k++)
@@ -944,9 +934,13 @@ void program_execution_space::full_elaborate()
 							oexec->pcs.erase(oexec->pcs.begin() + ready_places[i].second[j]);
 						}
 
-						for (size_t k = 0; k < oexec->ready_places.size(); k++)
-							if (oexec->ready_places[k].first == ready_places[i].first)
+						for (size_t k = 0; k < oexec->ready_places.size(); )
+						{
+							if (vector_intersection_size(&oexec->ready_places[k].second, &ready_places[i].second) > 0)
 								oexec->ready_places.erase(oexec->ready_places.begin() + k);
+							else
+								k++;
+						}
 
 						oexec->pcs[pc].index = ready_places[i].first;
 						oexec->pcs[pc].n.clear();
@@ -999,57 +993,6 @@ void program_execution_space::full_elaborate()
 void program_execution_space::reset()
 {
 	execs.clear();
-	nets.clear();
-}
-
-void program_execution_space::gen_translation(string name0, petri_net *net0, string name1, petri_net *net1)
-{
-	vector<pair<size_t, size_t> > factors;
-	for (size_t vi = 0; vi < net0->vars.globals.size(); vi++)
-	{
-		string test = net0->vars.globals[vi].name;
-		if (test.substr(0, 5) == "this.")
-			test = test.substr(5);
-
-		if (name0 != "")
-			test = name0 + "." + test;
-
-		size_t uid = net1->vars.globals.size();
-		if (name1.length() == 0)
-			uid = net1->vars.find(test);
-		else if (test.substr(0, name1.length()) == name1)
-			uid = net1->vars.find(test.substr(name1.length()+1));
-
-		if (uid < net1->vars.globals.size())
-			factors.push_back(pair<size_t, size_t>(vi, uid));
-	}
-
-	translations.insert(
-		pair<pair<pair<string, petri_net*>, pair<string, petri_net*> >, vector<pair<size_t, size_t> > >(
-			pair<pair<string, petri_net*>, pair<string, petri_net*> >(
-				pair<string, petri_net*>(name0, net0),
-				pair<string, petri_net*>(name1, net1)
-			),
-			factors
-		)
-	);
-}
-
-minterm program_execution_space::translate(string name0, petri_net *net0, minterm t, string name1, petri_net *net1)
-{
-	if (name0 != name1 || net0 != net1)
-	{
-		return t.refactor(
-			translations[
-				pair<pair<string, petri_net*>, pair<string, petri_net*> >(
-					pair<string, petri_net*>(name0, net0),
-					pair<string, petri_net*>(name1, net1)
-				)
-			]
-		);
-	}
-	else
-		return t;
 }
 
 /* PROGRAM INDEX AND PROGRAM STATE ARE ONLY USED FOR DEBUGGING */
@@ -1059,9 +1002,8 @@ program_index::program_index()
 	net = NULL;
 }
 
-program_index::program_index(string name, petri_net *net, petri_index index, minterm encoding)
+program_index::program_index(petri_net *net, petri_index index, minterm encoding)
 {
-	this->name = name;
 	this->net = net;
 	this->index = index;
 	this->encoding = encoding;
@@ -1069,7 +1011,6 @@ program_index::program_index(string name, petri_net *net, petri_index index, min
 
 program_index::program_index(const program_index &i)
 {
-	name = i.name;
 	net = i.net;
 	index = i.index;
 	encoding = i.encoding;
@@ -1082,7 +1023,6 @@ program_index::~program_index()
 
 program_index &program_index::operator=(program_index i)
 {
-	name = i.name;
 	net = i.net;
 	index = i.index;
 	encoding = i.encoding;
@@ -1097,20 +1037,19 @@ program_index &program_index::operator=(petri_index i)
 
 bool operator==(program_index i1, program_index i2)
 {
-	return (i1.name == i2.name && i1.net == i2.net && i1.index == i2.index && i1.encoding.subset(i2.encoding));
+	return (i1.net == i2.net && i1.index == i2.index && i1.encoding.subset(i2.encoding));
 }
 
 bool operator!=(program_index i1, program_index i2)
 {
-	return (i1.name != i2.name || i1.net != i2.net || i1.index != i2.index || !i1.encoding.subset(i2.encoding));
+	return (i1.net != i2.net || i1.index != i2.index || !i1.encoding.subset(i2.encoding));
 }
 
 bool operator<(program_index i1, program_index i2)
 {
-	return ((i1.name < i2.name) ||
-			(i1.name == i2.name && i1.net < i2.net) ||
-			(i1.name == i2.name && i1.net == i2.net && i1.index < i2.index) ||
-			(i1.name == i2.name && i1.net == i2.net && i1.index == i2.index && i1.encoding < i2.encoding));
+	return ((i1.net < i2.net) ||
+			(i1.net == i2.net && i1.index < i2.index) ||
+			(i1.net == i2.net && i1.index == i2.index && i1.encoding < i2.encoding));
 }
 
 program_state::program_state()
@@ -1121,7 +1060,7 @@ program_state::program_state()
 program_state::program_state(program_execution *exec)
 {
 	for (size_t p = 0; p < exec->pcs.size(); p++)
-		state.push_back(program_index(exec->pcs[p].name, exec->pcs[p].net, exec->pcs[p].index, exec->pcs[p].state));
+		state.push_back(program_index(exec->pcs[p].net, exec->pcs[p].index, exec->pcs[p].state));
 	sort(state.begin(), state.end());
 }
 
@@ -1138,7 +1077,7 @@ program_state::~program_state()
 program_state &program_state::operator=(program_execution *exec)
 {
 	for (size_t p = 0; p < exec->pcs.size(); p++)
-		state.push_back(program_index(exec->pcs[p].name, exec->pcs[p].net, exec->pcs[p].index, exec->pcs[p].state));
+		state.push_back(program_index(exec->pcs[p].net, exec->pcs[p].index, exec->pcs[p].state));
 	sort(state.begin(), state.end());
 	return *this;
 }

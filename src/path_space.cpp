@@ -7,6 +7,7 @@
 
 #include "path_space.h"
 #include "message.h"
+#include "petri.h"
 
 path_space::path_space(int s) : total(s)
 {
@@ -54,7 +55,7 @@ void path_space::merge(path_space s)
 {
 	paths.merge(s.paths);
 
-	for (int i = 0; i < s.total.size(); i++)
+	for (size_t i = 0; i < s.total.size(); i++)
 		total[i] += s.total[i];
 
 	total.from.insert(total.from.end(), s.total.from.begin(), s.total.from.end());
@@ -65,7 +66,7 @@ void path_space::push_back(path p)
 {
 	paths.push_back(p);
 
-	for (int i = 0; i < p.size(); i++)
+	for (size_t i = 0; i < p.size(); i++)
 		total[i] += p[i];
 
 	total.from.insert(total.from.end(), p.from.begin(), p.from.end());
@@ -74,7 +75,7 @@ void path_space::push_back(path p)
 
 list<path>::iterator path_space::erase(list<path>::iterator i)
 {
-	for (int j = 0; j < i->size(); j++)
+	for (size_t j = 0; j < i->size(); j++)
 		total[j] -= (*i)[j];
 
 	return paths.erase(i);
@@ -226,19 +227,25 @@ path path_space::get_mask()
 
 void path_space::apply_mask(path m)
 {
-	list<path>::iterator pi;
-	int i;
-
-	for (pi = paths.begin(); pi != paths.end(); pi++)
+	for (list<path>::iterator pi = paths.begin(); pi != paths.end(); pi++)
 	{
-		for (i = 0; i < (int)pi->size(); i++)
+		size_t i;
+		for (i = 0; i < pi->size() && i < m.size(); i++)
 			(*pi)[i] *= m[i];
+
+		for (; i < pi->size(); i++)
+			(*pi)[i] = 0;
+
 		if (pi->empty())
 			pi = paths.erase(pi);
 	}
 
-	for (int i = 0; i < (int)total.nodes.size(); i++)
+	size_t i;
+	for (i = 0; i < total.nodes.size() && i < m.size(); i++)
 		total[i] *= m[i];
+
+	for (; i < total.nodes.size(); i++)
+		total[i] = 0;
 }
 
 path_space path_space::inverse()
@@ -301,6 +308,23 @@ path &path_space::operator()(int i)
 	for (j = paths.begin(); j != paths.end() && i > 0; j++, i--);
 
 	return *j;
+}
+
+dot_graph path_space::export_dot(petri_net *net)
+{
+	dot_graph result;
+	result.id = "model";
+	result.type = "digraph";
+
+	int t_base = 0, s_base = 0;
+	for (list<path>::iterator j = paths.begin(); j != paths.end(); j++)
+	{
+		result.stmt_list.stmts.push_back(j->export_dot(net, t_base, s_base));
+		t_base += net->T.size();
+		s_base += net->S.size();
+	}
+
+	return result;
 }
 
 ostream &operator<<(ostream &os, path_space p)

@@ -142,8 +142,13 @@ Given the set of states $S$ for which $S_p$ is a partial state and $S_{np}$ is a
 effective(S_p) &= \bigvee_{S_i \in S} effective(S_i) \\
 &= \bigvee_{S_i \in S} \bigg( S_i \wedge \bigwedge_{T_{ij} \in T_i} \neg T_{ij} \bigg) \\
 &= \bigvee_{S_{npi} \in S_{np}} \bigg( S_p \wedge S_{npi} \wedge \bigg( \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg) \wedge \bigg( \bigwedge_{T_{npij} \in T_{npi}} \neg T_{npij} \bigg) \wedge \bigg( \bigwedge_{T_{nij} \in T_{ni}} \neg T_{nij} \bigg) \bigg) \\
-&= \bigg( S_p \wedge \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg) \wedge \bigvee_{S_{npi} \in S_{np}} \bigg( \bigg( S_{npi} \wedge \bigwedge_{T_{npij} \in T_{npi}} \neg T_{npij} \bigg) \wedge \bigwedge_{T_{nij} \in T_{ni}} \neg T_{nij} \bigg) \\
-&\subseteq \bigg( S_p \wedge \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg)
+&= \bigg( S_p \wedge \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg) \wedge \bigvee_{S_{npi} \in S_{np}} \bigg( \bigg( S_{npi} \wedge \bigwedge_{T_{npij} \in T_{npi}} \neg T_{npij} \bigg) \wedge \bigwedge_{T_{nij} \in T_{ni}} \neg T_{nij} \bigg)
+\end{align}
+
+If a transition $T_{npi} \in T_{np}$ is at least possibly vacuous, then the state encoding for which $T_{npi}$ is vacuous exists in both the predicates for the input and output places by definition of vacuous. Given that $S_i$ is an input state of $T_{npi}$ and the state $S_o$ is the result of the transition $T_{npi}$ out of $S_i$ and that state encoding is not vacuous for any output transition of $S_o$, then the above equation will remove a state encoding and leave its duplicate, essentially doing nothing. Therefore, we do not need to remove these state encodings in the first place.
+
+\begin{align}
+&= \bigg( S_p \wedge \bigwedge_{T_{pi} \in T_p} \neg T_{pi} \bigg) \wedge \bigvee_{S_{npi} \in S_{np}} \bigg( S_{npi} \wedge \bigwedge_{T_{nij} \in T_{ni}} \neg T_{nij} \bigg)
 \end{align}
 \end{lemma}
 

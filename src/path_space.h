@@ -10,6 +10,8 @@
 #ifndef path_space_h
 #define path_space_h
 
+struct petri_net;
+
 struct path_space
 {
 	path_space(int s);
@@ -58,6 +60,8 @@ struct path_space
 
 	int &operator[](int i);
 	path &operator()(int i);
+
+	dot_graph export_dot(petri_net *net);
 };
 
 ostream &operator<<(ostream &os, path_space p);

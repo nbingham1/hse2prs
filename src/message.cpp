@@ -15,6 +15,8 @@ int num_notes = 0;
 int num_log = 0;
 bool verbose = false;
 
+int progress_length = 0;
+
 void internal(tokenizer &tokens, string internal, string debug_file, int debug_line, int offset)
 {
 	size_t i = tokens.index < tokens.tokens.size() ? tokens.index : 0;
@@ -239,21 +241,57 @@ void log(string location, string log, string debug_file, int debug_line)
 
 void progress(string location, string log, string debug_file, int debug_line)
 {
+	if (verbose)
+	{
 #ifdef DEBUG
-	cout << debug_file << ":" << debug_line << ":";
-	if (location == "")
-		cout << "\t";
+		cout << debug_file << ":" << debug_line << ":";
+		if (location == "")
+			cout << "\t";
 #endif
-	if (location != "")
-		cout << location << ":\t";
-	cout << log << string(100, ' ') << "\r";
-	cout.flush();
+		if (location != "")
+			cout << location << ":\t";
+		cout << log << endl;
+
+		num_log++;
+	}
+	else
+	{
+		int length = 0;
+	#ifdef DEBUG
+		length += (int)debug_file.length() + logi(debug_line) + 3;
+		cout << debug_file << ":" << debug_line << ":";
+		if (location == "")
+		{
+			length = 8*(int)(length/8 + 1);
+			cout << "\t";
+		}
+	#endif
+		if (location != "")
+		{
+			length += (int)location.length() + 1;
+			length = 8*(int)(length/8 + 1);
+			cout << location << ":\t";
+		}
+
+		length += (int)log.length();
+		cout << log;
+		if (progress_length > length)
+			cout << string(progress_length - length, ' ');
+		cout << "\r";
+		cout.flush();
+
+		progress_length = length;
+	}
 }
 
 void done_progress()
 {
-	cout << string(100, ' ') << "\r";
-	cout.flush();
+	if (!verbose)
+	{
+		cout << string(progress_length, ' ') << "\r";
+		progress_length = 0;
+		cout.flush();
+	}
 }
 
 void complete()

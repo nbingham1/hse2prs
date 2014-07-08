@@ -56,10 +56,14 @@ unsigned int count_0bits(unsigned int x);
 
 int powi(int base, int exp);
 int log2i(unsigned long long value);
+int logi(int num, int base = 10);
 
 uint32_t bitwise_or(uint32_t a, uint32_t b);
 uint32_t bitwise_and(uint32_t a, uint32_t b);
 uint32_t bitwise_not(uint32_t a);
+
+vector<size_t> first_combination(size_t s);
+bool next_combination(size_t S, vector<size_t> *iter);
 
 string readfile(string filename);
 
@@ -71,6 +75,28 @@ size_t find_first_of_l0(string content, string search, size_t pos = 0);
 size_t find_first_of_l0(string content, list<string> search, size_t pos = 0, list<string> exclude = list<string>());
 size_t find_last_of_l0(string content, string search, size_t pos = 0);
 size_t find_last_of_l0(string content, list<string> search, size_t pos = 0, list<string> exclude = list<string>());
+
+template <typename type>
+int vector_intersection_size(const vector<type> *v1, const vector<type> *v2)
+{
+	int result = 0;
+	typename vector<type>::const_iterator i, j;
+	for (i = v1->begin(), j = v2->begin(); i != v1->end() && j != v2->end();)
+	{
+		if (*j > *i)
+			i++;
+		else if (*i > *j)
+			j++;
+		else
+		{
+			result++;
+			i++;
+			j++;
+		}
+	}
+
+	return result;
+}
 
 template <typename type>
 void vector_symmetric_compliment(vector<type> *v1, vector<type> *v2)

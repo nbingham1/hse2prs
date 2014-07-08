@@ -62,7 +62,8 @@ struct petri_node
 	~petri_node();
 
 	canonical predicate;
-	map<vector<petri_index>, canonical> observed;
+	canonical effective;
+	map<vector<petri_index>, pair<canonical, int> > observed;
 	bool active;
 
 	canonical assumptions;
@@ -87,6 +88,7 @@ struct petri_net
 	vector<petri_arc> arcs;
 
 	list<pair<petri_index, petri_index> > parallel_nodes;
+	vector<vector<petri_index> > valid_states;
 
 	map<petri_index, list<vector<petri_index> > > conflicts;
 	map<petri_index, list<vector<petri_index> > > indistinguishable;
@@ -149,6 +151,7 @@ struct petri_net
 	bool have_same_source(petri_index n0, petri_index n1);
 	bool have_same_dest(petri_index n0, petri_index n1);
 	bool are_parallel_siblings(petri_index p0, petri_index p1);
+	bool are_parallel_siblings(size_t a0, size_t a1);
 
 	// Accessor functions
 	petri_node &operator[](petri_index i);
@@ -158,7 +161,6 @@ struct petri_net
 	pair<int, int> closest_input(vector<int> from, vector<int> to);
 	pair<int, int> closest_output(vector<int> from, vector<int> to);
 	void get_paths(vector<int> from, vector<int> to, path_space *result);
-	vector<int> start_path(vector<int> to, vector<int> from);
 	void zero_paths(path_space *paths, petri_index from);
 	void zero_paths(path_space *paths, vector<petri_index> from);
 	void zero_ins(path_space *paths, petri_index from);
@@ -173,11 +175,11 @@ struct petri_net
 	pair<int, int> get_input_sense_count(petri_index idx);
 	pair<int, int> get_input_sense_count(vector<petri_index> idx);
 	petri_index get_split_place(petri_index merge_place, vector<bool> *covered);
-	void remove_invalid_split_points(pair<int, int> up_sense_count, vector<petri_index> up_start, path_space *up_paths, pair<int, int> down_sense_count, vector<petri_index> down_start, path_space *down_paths);
+	void remove_invalid_split_points(vector<petri_index> up_start, path_space *up_paths, vector<petri_index> down_start, path_space *down_paths);
 	vector<int> choose_split_points(path_space *paths);
 
 	void add_conflict_pair(map<petri_index, list<vector<petri_index> > > *c, petri_index i, petri_index j);
-	void generate_paths(pair<int, int> *up_sense_count, vector<petri_index> up_start, path_space *up_paths, pair<int, int> *down_sense_count, vector<petri_index> down_start,  path_space *down_paths);
+	void generate_paths(vector<petri_index> up_start, path_space *up_paths, vector<petri_index> down_start,  path_space *down_paths);
 	void generate_conflicts();
 	bool solve_conflicts();
 
@@ -191,10 +193,11 @@ struct petri_net
 	 * \sa		merge_conflicts() and zip()
 	 */
 	void compact();
-	void generate_observed();
 
-	canonical get_effective_place_encoding(petri_index place, vector<petri_index> observer);
-	canonical get_effective_state_encoding(vector<petri_index> state, vector<petri_index> observer, vector<petri_index> path);
+	canonical get_effective(petri_index observer, petri_index location);
+	canonical get_effective(petri_index observer, vector<petri_index> location);
+	canonical get_effective(vector<petri_index> observer, petri_index location);
+	canonical get_effective(vector<petri_index> observer, vector<petri_index> location);
 
 	vector<petri_index> get_cut(vector<petri_index> base, bool backward, bool conditional);
 	vector<int> get_arc_cut(vector<int> base, bool backward, bool conditional);

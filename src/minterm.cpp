@@ -75,6 +75,56 @@ minterm::minterm(string str)
 	values.back() &= (0xFFFFFFFF << (32 - ((size & 0xF)<<1)));
 }
 
+minterm::minterm(string exp, variable_space &vars)
+{
+	default_value = vX;
+	string var;
+	uint32_t value;
+	size_t uid;
+	uint32_t s = vars.globals.size();
+	uint32_t w = s >> 4, i;
+
+	for (i = 0; i < w; i++)
+		values.push_back(vX);
+	if (((16 - (s & 0x000000F)) << 1) < 32)
+		values.push_back(vX << ((16 - (s & 0x000000F)) << 1));
+	size = s;
+
+	for (size_t k = 0, l = 0; k <= exp.size(); k++)
+	{
+		if (k == exp.size() || exp[k] == '&')
+		{
+			if (exp[l] == '~')
+			{
+				l++;
+				value = v0;
+				var = exp.substr(l, k-l);
+			}
+			else
+			{
+				value = v1;
+				var = exp.substr(l, k-l);
+			}
+
+			uid = vars.find(var);
+
+			if (uid < vars.globals.size())
+				sv_intersect(uid, value);
+			else if ((var == "0" && value == v1) || (var == "1" && value == v0))
+			{
+				for (i = 0; i < w+1; i++)
+					values[i] = v_;
+				return;
+			}
+			else if (var != "1" && var != "0")
+				error("", "undefined variable \'" + var + "\'", "", __FILE__, __LINE__);
+
+			l = k+1;
+		}
+	}
+}
+
+
 minterm::~minterm()
 {
 }
@@ -734,7 +784,7 @@ minterm minterm::operator>>(minterm t)
 
 	uint32_t v;
 	minterm result;
-	for (int i = 0; i < (int)values.size(); i++)
+	for (size_t i = 0; i < values.size(); i++)
 	{
 		v = t.values[i] & (t.values[i] >> 1) & v0;
 		v = v | (v<<1);

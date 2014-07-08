@@ -29,6 +29,7 @@ struct minterm
 	minterm();
 	minterm(const minterm &m);
 	minterm(string str);
+	minterm(string exp, variable_space &vars);
 	~minterm();
 
 	vector<uint32_t> values;

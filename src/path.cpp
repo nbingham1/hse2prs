@@ -7,6 +7,7 @@
 
 #include "path.h"
 #include "common.h"
+#include "petri.h"
 
 path::path(int s)
 {
@@ -46,7 +47,7 @@ path::~path()
 
 }
 
-int path::size()
+size_t path::size()
 {
 	return nodes.size();
 }
@@ -165,18 +166,115 @@ int &path::operator[](int i)
 	return nodes[i];
 }
 
+dot_stmt path::export_dot(petri_net *net, int t_base, int s_base)
+{
+	dot_stmt stmt;
+	stmt.stmt_type = "subgraph";
+	stmt.id = net->name;
+
+	dot_a_list a_list;
+	dot_stmt substmt;
+
+	for (size_t i = 0; i < net->S.size(); i++)
+	{
+		a_list.as.clear();
+		substmt.attr_list.attrs.clear();
+		substmt.node_ids.clear();
+		substmt.stmt_list.stmts.clear();
+		substmt.id = "";
+		substmt.stmt_type = "";
+		substmt.attr_type = "";
+
+		a_list.as.push_back(dot_a("shape", "circle"));
+		a_list.as.push_back(dot_a("width", "0.25"));
+
+		a_list.as.push_back(dot_a("label", ""));
+
+		a_list.as.push_back(dot_a("xlabel", petri_index(i + s_base, true).name()));
+
+		substmt.node_ids.push_back(dot_node_id(petri_index(i + s_base, true).name()));
+		substmt.stmt_type = "node";
+		substmt.attr_list.attrs.push_back(a_list);
+		stmt.stmt_list.stmts.push_back(substmt);
+	}
+
+	for (size_t i = 0; i < net->T.size(); i++)
+	{
+		a_list.as.clear();
+		substmt.attr_list.attrs.clear();
+		substmt.node_ids.clear();
+		substmt.stmt_list.stmts.clear();
+		substmt.id = "";
+		substmt.stmt_type = "";
+		substmt.attr_type = "";
+
+		a_list.as.push_back(dot_a("shape", "plaintext"));
+		if (net->T[i].active)
+			a_list.as.push_back(dot_a("label", net->T[i].predicate.print(net->vars)));
+		else
+			a_list.as.push_back(dot_a("label", "[ " + net->T[i].predicate.print(net->vars) + " ]"));
+
+		a_list.as.push_back(dot_a("xlabel", petri_index(i + t_base, false).name()));
+
+		substmt.node_ids.push_back(dot_node_id(petri_index(i + t_base, false).name()));
+		substmt.stmt_type = "node";
+		substmt.attr_list.attrs.push_back(a_list);
+
+		stmt.stmt_list.stmts.push_back(substmt);
+	}
+
+	for (size_t i = 0; i < net->arcs.size(); i++)
+	{
+		a_list.as.clear();
+		substmt.attr_list.attrs.clear();
+		substmt.node_ids.clear();
+		substmt.stmt_list.stmts.clear();
+		substmt.id = "";
+		substmt.stmt_type = "";
+		substmt.attr_type = "";
+
+		pair<petri_index, petri_index> a = net->arcs[i];
+		if (a.first.is_trans())
+			a.first.data += t_base;
+		else
+			a.first.data += s_base;
+
+		if (a.second.is_trans())
+			a.second.data += t_base;
+		else
+			a.second.data += s_base;
+
+		substmt.node_ids.push_back(dot_node_id(a.first.name()));
+		substmt.node_ids.push_back(dot_node_id(a.second.name()));
+		substmt.stmt_type = "edge";
+
+		substmt.attr_list.attrs.push_back(dot_a_list());
+		substmt.attr_list.attrs.back().as.push_back(dot_a("label", to_string(i)));
+		if (nodes[i] > 0)
+			substmt.attr_list.attrs.back().as.push_back(dot_a("penwidth", "10"));
+
+		stmt.stmt_list.stmts.push_back(substmt);
+	}
+
+	return stmt;
+}
+
 ostream &operator<<(ostream &os, path p)
 {
+	os << "[" << p.from << "-";
+
 	vector<int>::iterator i;
 	for (i = p.begin(); i != p.end(); i++)
 		os << *i << " ";
+
+	os << ">" << p.to << "]";
 	return os;
 }
 
 path operator+(path p1, path p2)
 {
 	path result(max(p1.size(), p2.size()));
-	for (int i = 0; i < result.size(); i++)
+	for (size_t i = 0; i < result.size(); i++)
 		result[i] = p1[i] + p2[i];
 
 	return result;
@@ -184,14 +282,14 @@ path operator+(path p1, path p2)
 
 path operator/(path p1, int n)
 {
-	for (int i = 0; i < p1.size(); i++)
+	for (size_t i = 0; i < p1.size(); i++)
 		p1[i] /= n;
 	return p1;
 }
 
 path operator*(path p1, int n)
 {
-	for (int i = 0; i < p1.size(); i++)
+	for (size_t i = 0; i < p1.size(); i++)
 		p1[i] *= n;
 	return p1;
 }

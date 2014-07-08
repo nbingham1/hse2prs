@@ -272,6 +272,17 @@ int log2i(unsigned long long value)
   return y;
 }
 
+int logi(int num, int base)
+{
+	int result = 0;
+	while (num > base)
+	{
+		num /= base;
+		result++;
+	}
+	return result;
+}
+
 uint32_t bitwise_or(uint32_t a, uint32_t b)
 {
 	return a||b;
@@ -285,6 +296,29 @@ uint32_t bitwise_and(uint32_t a, uint32_t b)
 uint32_t bitwise_not(uint32_t a)
 {
 	return !a;
+}
+
+vector<size_t> first_combination(size_t s)
+{
+	vector<size_t> result;
+	for (size_t i = 0; i < s; i++)
+		result.push_back(i);
+	return result;
+}
+
+bool next_combination(size_t S, vector<size_t> *iter)
+{
+	for (size_t i = 1; i <= iter->size(); i++)
+	{
+		if ((*iter)[iter->size()-i] < S-i)
+		{
+			(*iter)[iter->size()-i]++;
+			for (size_t j = iter->size()-i+1; j < iter->size(); j++)
+				(*iter)[j] = (*iter)[j-1]+1;
+			return true;
+		}
+	}
+	return false;
 }
 
 size_t find_first_of_l0(string content, string search, size_t pos)

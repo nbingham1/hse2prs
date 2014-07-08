@@ -47,6 +47,27 @@ canonical::canonical(vector<minterm> m)
  * \param	s		A string that represents the expression.
  * \param	vars	The variable space used to parse the string.
  */
+canonical::canonical(string s, variable_space &vars)
+{
+	if (s == "0")
+		return;
+
+	vector<string> t = distribute(demorgan(s, -1, false));
+	for (size_t i = 0; i < t.size(); i++)
+	{
+		minterm m(t[i], vars);
+		if (m != 0)
+			terms.push_back(m);
+	}
+	mccluskey();
+}
+
+
+/**
+ * \brief	A constructor that parses a string and uses it to fill the canonical expression with values.
+ * \param	s		A string that represents the expression.
+ * \param	vars	The variable space used to parse the string.
+ */
 canonical::canonical(tokenizer &tokens, string s, variable_space &vars)
 {
 	if (s == "0")

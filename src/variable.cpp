@@ -28,6 +28,16 @@ variable::~variable()
 {
 }
 
+string variable::inverse_name()
+{
+	int idx = name.find_last_of(".");
+
+	if (name[idx + 1] == '_')
+		return name.substr(0, idx+1) + name.substr(idx+2);
+	else
+		return name.substr(0, idx+1) + "_" + name.substr(idx+1);
+}
+
 variable &variable::operator=(variable v)
 {
 	name = v.name;

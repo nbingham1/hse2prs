@@ -6,9 +6,12 @@
  */
 
 #include "common.h"
+#include "dot.h"
 
 #ifndef path_h
 #define path_h
+
+struct petri_net;
 
 struct path
 {
@@ -22,7 +25,7 @@ struct path
 	vector<int> from, to;
 	vector<int> nodes;
 
-	int size();
+	size_t size();
 	void clear();
 	bool contains(int n);
 	void set(int n);
@@ -38,6 +41,8 @@ struct path
 	path &operator=(path p);
 
 	int &operator[](int i);
+
+	dot_stmt export_dot(petri_net *net, int t_base, int s_base);
 };
 
 ostream &operator<<(ostream &os, path p);

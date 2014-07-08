@@ -24,6 +24,7 @@ struct canonical
 	canonical(int s);
 	canonical(minterm m);
 	canonical(vector<minterm> m);
+	canonical(string s, variable_space &vars);
 	canonical(tokenizer &tokens, string s, variable_space &vars);
 	canonical(int var, uint32_t val);
 	canonical(map<int, uint32_t> vals);

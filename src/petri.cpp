@@ -834,6 +834,14 @@ bool petri_net::are_parallel_siblings(petri_index p0, petri_index p1)
 		return binary_search(parallel_nodes.begin(), parallel_nodes.end(), pair<petri_index, petri_index>(p1, p0));
 }
 
+bool petri_net::are_parallel_siblings(size_t a0, size_t a1)
+{
+	return (are_parallel_siblings(arcs[a0].first, arcs[a1].first) ||
+			are_parallel_siblings(arcs[a0].first, arcs[a1].second) ||
+			are_parallel_siblings(arcs[a0].second, arcs[a1].first) ||
+			are_parallel_siblings(arcs[a0].second, arcs[a1].second));
+}
+
 petri_node &petri_net::operator[](petri_index i)
 {
 	return i.is_place() ? S[i.data] : T[i.data & 0x7FFFFFFF];
@@ -894,228 +902,292 @@ pair<int, int> petri_net::closest_output(vector<int> from, vector<int> to)
 	return pair<int, int>(arcs.size(), -1);
 }
 
-void petri_net::get_paths(vector<int> from, vector<int> to, path_space *result)
+bool path_sort(vector<path> p1, vector<path> p2)
 {
-	sort(to.begin(), to.end());
-	to.resize(unique(to.begin(), to.end()) - to.begin());
-	sort(from.begin(), from.end());
-	from.resize(unique(from.begin(), from.end()) - from.begin());
-
-	vector<int> ex = from;
-
-	do
-	{
-		list<path_space> paths(1, path_space(arcs.size()));
-		for (size_t i = 0; i < from.size(); i++)
-			paths.back().paths.push_back(path(arcs.size(), from[i], from[i]));
-
-		/* This part could actually be really simple if we didn't care about one optimization.
-		 * However since inserting state variables is such an expensive action (circuit optimality wise)
-		 * we need to take every optimization we can get. In this case the optimization is as follows:
-		 * If you have a set of paths that cross a parallel split-merge pair, and you decide to split
-		 * that part of the path using a state variable, then you only need to cover one branch of that
-		 * parallel split-merge pair because the value of the state variable will propagate across the
-		 * merge.
-		 *
-		 * If we didn't care about this, then we could simply create a new path for every split no matter
-		 * what kind. However to take advantage of this optimization, we want to set up the paths so they
-		 * cover every branch for every parallel split-merge pair they cross. That way the state variable
-		 * insertion algorithm can eliminate that path by only splitting one of those branches with a state
-		 * variable.
-		 *
-		 * To do this, we have groups of paths that represent different conditional branches and each path
-		 * within a group represents a parallel branch. If two or more parallel branches meet, then we merge them
-		 * and take the max of their crossing counts for each arc.
-		 */
-		for (list<path_space>::iterator exec = paths.begin(); exec != paths.end(); exec = paths.begin())
-		{
-			bool done = false;
-			while (!done)
-			{
-				done = true;
-				for (list<path>::iterator pc = exec->paths.begin(); pc != exec->paths.end(); )
-				{
-					/* If we hit an arc that should be excluded or we
-					 * found a loop then we kill this path and move on.
-					 */
-					if ((find(ex.begin(), ex.end(), pc->to.front()) != ex.end() && find(pc->from.begin(), pc->from.end(), pc->to.front()) == pc->from.end()) || pc->nodes[pc->to.front()] > 0)
-						pc = exec->paths.erase(pc);
-					/* If we have not reached one of the designated ending nodes
-					 * then we record this location in the path and
-					 * increment to the next set of arcs.
-					 */
-					else if (find(to.begin(), to.end(), pc->to.front()) == to.end())
-					{
-						vector<int> n = next_arc(pc->to.front());
-
-						done = false;
-						pc->nodes[pc->to.front()]++;
-
-						for (int j = n.size()-1; j >= 0; j--)
-						{
-							if (j == 0)
-								pc->to.front() = n[j];
-							else if (arcs[pc->to.front()].second.is_place())
-							{
-								int old = pc->to.front();
-								pc->to.front() = n[j];
-								paths.push_back(*exec);
-								pc->to.front() = old;
-							}
-							else
-							{
-								exec->paths.push_back(*pc);
-								exec->paths.back().to.front() = n[j];
-							}
-						}
-					}
-					else
-						pc++;
-				}
-			}
-
-			for (list<path>::iterator pc = exec->paths.begin(); pc != exec->paths.end(); pc++)
-			{
-				for (list<path>::iterator test = exec->paths.begin(); test != exec->paths.end(); )
-				{
-					if (test != pc && pc->to.front() == test->to.front())
-					{
-						for (size_t i = 0; i < pc->nodes.size() && i < test->nodes.size(); i++)
-							if (test->nodes[i] > pc->nodes[i])
-								pc->nodes[i] = test->nodes[i];
-
-						pc->from.insert(pc->from.end(), test->from.begin(), test->from.end());
-						test = exec->paths.erase(test);
-					}
-					else
-						test++;
-				}
-
-				sort(pc->from.begin(), pc->from.end());
-				pc->from.resize(unique(pc->from.begin(), pc->from.end()) - pc->from.begin());
-			}
-
-			result->paths.insert(result->paths.end(), exec->paths.begin(), exec->paths.end());
-			result->paths.sort();
-			result->paths.unique();
-
-			paths.pop_front();
-		}
-
-		result->repair();
-
-		/* Variable values aren't preserved across a conditional merge
-		 * unless the variable has the same value across all incoming
-		 * arcs on that merge. This means that we have to look for any
-		 * conditional merges that have been crossed and check to see
-		 * if the current path set covers all incoming arcs to that
-		 * merge. If the current path set doesn't, then we need to iterate
-		 * as far back down that uncovered path as we can (until we run
-		 * into a conditional split that was never merged). From there
-		 * we re-run the get paths function on those new arc indices
-		 * effectively recursing.
-		 */
-		vector<int> missed;
-		for (size_t i = 0; i < arcs.size(); i++)
-		{
-			// Is this a conditional merge? and did we cross that merge? and did we not start at that merge?
-			if (arcs[i].first.is_place() && result->coverage_count(i) > 0 && find(result->total.from.begin(), result->total.from.end(), i) == result->total.from.end())
-			{
-				vector<int> p = prev_arc(i);
-
-				if (p.size() > 1)
-				{
-					// Figure out which incoming arcs haven't been covered yet
-					// and store one that is covered in c (so we can duplicate
-					// the correct number of paths). If none of them are covered
-					// then the execution started at this merge and we don't need
-					// to do anything else.
-					for (size_t j = 0; j < p.size(); j++)
-						if (result->coverage_count(p[j]) <= 0)
-							missed.push_back(p[j]);
-				}
-			}
-		}
-
-		from = start_path(missed, ex);
-		ex.insert(ex.end(), from.begin(), from.end());
-		sort(ex.begin(), ex.end());
-		ex.resize(unique(ex.begin(), ex.end()) - ex.begin());
-	} while (from.size() > 0);
+	if (p1.size() == 0)
+		return true;
+	else if (p2.size() == 0)
+		return false;
+	else
+		return p1[0].to < p2[0].to;
 }
 
-vector<int> petri_net::start_path(vector<int> to, vector<int> from)
+/**
+ * Generate the set of paths such that if you cut all paths in that set with
+ * state variable transitions, then you cannot get from 'from' to 'to' without
+ * crossing at least one of those transitions. This algorithm is linear with
+ * the number of places with a worst case of 2N (and a best case of 0).
+ *
+ * @param from
+ * @param to
+ * @param result This must be a non-null path space. The resulting paths are appended to
+ * 				 this path space.
+ */
+void petri_net::get_paths(vector<int> from, vector<int> to, path_space *result)
 {
-	vector<vector<int> > pcs(1, to);
+	//cout << "Getting Paths " << from << " -> " << to << endl;
+	if (result == NULL)
+		return;
 
-	for (size_t i = 0; i < pcs.size(); i++)
+	/* Start at the reset state because this state is the only state that we know
+	 * is not on a branch of a conditional or parallel split. This means that we can
+	 * iterate over the net, merging program counters for both conditional and parallel
+	 * merges. This is the key feature that allows this algorithm to be linear time.
+	 */
+	vector<int> start = outgoing(M0);
+
+	/* Each program counter is an array of paths where every path in the array has the
+	 * same to node and every path has only one to node. They are allowed to have different
+	 * and multiple from nodes.
+	 */
+	vector<vector<path> > pcs(start.size(), vector<path>());
+	for (size_t i = 0; i < start.size(); i++)
 	{
-		bool done = false;
-		while (!done)
-		{
-			done = true;
-			for (size_t j = 0; j < pcs[i].size(); j++)
-			{
-				if (find(from.begin(), from.end(), pcs[i][j]) == from.end())
-				{
-					vector<int> p = incoming(arcs[pcs[i][j]].first);
-					vector<int> n = outgoing(arcs[pcs[i][j]].first);
-
-					vector<int> test;
-					vector<int>::iterator fn;
-					if (arcs[pcs[i][j]].first.is_place() && n.size() > 1)
-					{
-						test = n;
-						for (size_t k = 0; k < pcs[i].size(); k++)
-							if ((fn = find(test.begin(), test.end(), pcs[i][k])) != test.end())
-								test.erase(fn);
-					}
-
-					if (test.size() == 0)
-					{
-						if (n.size() > 1)
-							for (size_t k = 0; k < pcs[i].size(); )
-							{
-								if (k != j && arcs[pcs[i][k]].first == arcs[pcs[i][j]].first)
-								{
-									pcs[i].erase(pcs[i].begin() + k);
-									if (k < j)
-										j--;
-								}
-								else
-									k++;
-							}
-
-						done = false;
-
-						for (size_t k = 0; k < p.size(); k++)
-						{
-							if (k == p.size()-1)
-								pcs[i][j] = p[k];
-							else if (arcs[pcs[i][j]].first.is_trans())
-							{
-								pcs.push_back(pcs[i]);
-								pcs.back()[j] = p[k];
-							}
-							else
-								pcs[i].push_back(p[k]);
-						}
-					}
-				}
-				else
-					internal("", "start path hit boundary", __FILE__, __LINE__);
-			}
-		}
+		pcs[i].push_back(path(arcs.size()));
+		pcs[i][0].to.push_back(start[i]);
 	}
 
-	vector<int> result;
+	vector<pair<petri_index, vector<size_t> > > ready;
+	do
+	{
+		//cout << pcs << endl;
+
+		ready.clear();
+
+		// Get the set of next possible nodes
+		vector<petri_index> n;
+		for (size_t i = 0; i < pcs.size(); i++)
+			n.push_back(arcs[pcs[i][0].to.front()].second);
+
+		// n is sorted in ascending order
+		// the program counters are sorted in ascending order
+		sort(n.begin(), n.end());
+		sort(pcs.begin(), pcs.end(), path_sort);
+		n.resize(unique(n.begin(), n.end()) - n.begin());
+
+		for (size_t i = 0; i < n.size(); i++)
+		{
+			// p is sorted in ascending order
+			vector<int> p = incoming(n[i]);
+
+			// check to see if the program counters cover all required arcs in p
+			vector<size_t> count;
+			for (size_t j = 0, k = 0; j < pcs.size() && k < p.size(); )
+			{
+				if (pcs[j][0].to[0] < p[k])
+					j++;
+				else if ((p[k] < pcs[j][0].to[0]) || (find(to.begin(), to.end(), p[k]) != to.end() && (pcs[j].size() > 1 || (pcs[j].size() == 1 && pcs[j][0].from.size() > 0))))
+					k++;
+				else
+				{
+					count.push_back(j);
+					j++;
+					k++;
+				}
+			}
+
+			// If it does, then we can merge these counters and increment to the next arc
+			if (count.size() == p.size())
+				ready.push_back(pair<petri_index, vector<size_t> >(n[i], count));
+		}
+
+		//cout << "Ready: " << ready.size() << " " << ready << endl;
+
+		/* update the paths in the ready counters, marking that we visited a particular arc
+		 * as long as this path has already crossed one of the from arcs.
+		 */
+		for (size_t i = 0; i < ready.size(); i++)
+			for (size_t j = 0; j < ready[i].second.size(); j++)
+				for (size_t k = 0; k < pcs[ready[i].second[j]].size(); k++)
+					if (pcs[ready[i].second[j]][k].from.size() > 0)
+						pcs[ready[i].second[j]][k].nodes[pcs[ready[i].second[j]][k].to[0]] = 1;
+
+		vector<int> remove;
+		for (size_t i = 0; i < ready.size(); i++)
+		{
+			/* Merge the counters in each group. It is important to notice
+			 * that because we are dealing with arcs, an arc can only be in
+			 * one merge group at a time because an arc only has one output node.
+			 * This simplifies things because we don't have to deal with making
+			 * choices when merging groups.
+			 */
+			if (ready[i].first.is_place())
+			{
+				/* If we are merging at a place, then we just merge the lists of paths
+				 * as a way of saying "here are all of the decisions that can be made
+				 * that will end up taking us to this node in the net".
+				 */
+				for (size_t j = 1; j < ready[i].second.size(); j++)
+				{
+					if (pcs[ready[i].second[0]].size() == 1 && pcs[ready[i].second[0]][0].from.size() == 0)
+						pcs[ready[i].second[0]] = pcs[ready[i].second[j]];
+					else if (pcs[ready[i].second[j]].size() > 1 || (pcs[ready[i].second[j]].size() == 1 && pcs[ready[i].second[j]][0].from.size() != 0))
+						pcs[ready[i].second[0]].insert(pcs[ready[i].second[0]].end(), pcs[ready[i].second[j]].begin(), pcs[ready[i].second[j]].end());
+
+					// We can't remove the merged paths until the end because of indexing
+					remove.push_back(ready[i].second[j]);
+				}
+			}
+			else
+			{
+				/* If we are merging at a transition, then we need to look at every combination
+				 * of paths given the sets of paths for each program counter in the merge. It is
+				 * a way of saying "We could have made this set of decisions and still gotten to
+				 * this node, or we could have made this other set of decisions, ..." and so on.
+				 * In this case we actually combine the paths by taking the max crossing count for
+				 * each node on the paths. We do this because if you cut one parallel branch with a
+				 * transition, that transition will fire at some point during execution of the other
+				 * branches, and it will fire by the time we hit this merge.
+				 */
+				for (size_t j = 1; j < ready[i].second.size(); j++)
+				{
+					// We have to save the current number of paths in this set because
+					// this number will change and we don't want an infinite loop.
+					size_t limit = pcs[ready[i].second[0]].size();
+					for (size_t k = 0; k < limit; k++)
+						for (size_t l = 0; l < pcs[ready[i].second[j]].size(); l++)
+						{
+							// Insert a new path to handle this particular combination
+							int pc = k;
+							if (l < pcs[ready[i].second[j]].size() - 1)
+							{
+								pc = pcs[ready[i].second[0]].size();
+								pcs[ready[i].second[0]].push_back(pcs[ready[i].second[0]][k]);
+							}
+
+							// Merge to paths in question by taking the max
+							for (size_t m = 0; m < arcs.size(); m++)
+								if (pcs[ready[i].second[0]][pc].nodes[m] < pcs[ready[i].second[j]][l].nodes[m])
+									pcs[ready[i].second[0]][pc].nodes[m] = pcs[ready[i].second[j]][l].nodes[m];
+
+							// Merge the list of from nodes and sort and unique
+							pcs[ready[i].second[0]][pc].from.insert(pcs[ready[i].second[0]][pc].from.end(), pcs[ready[i].second[j]][l].from.begin(), pcs[ready[i].second[j]][l].from.end());
+							sort(pcs[ready[i].second[0]][pc].from.begin(), pcs[ready[i].second[0]][pc].from.end());
+							pcs[ready[i].second[0]][pc].from.resize(unique(pcs[ready[i].second[0]][pc].from.begin(), pcs[ready[i].second[0]][pc].from.end()) - pcs[ready[i].second[0]][pc].from.begin());
+						}
+
+					// We can't remove the merged paths until the end because of indexing
+					remove.push_back(ready[i].second[j]);
+				}
+
+				sort(pcs[ready[i].second[0]].begin(), pcs[ready[i].second[0]].end());
+				pcs[ready[i].second[0]].resize(unique(pcs[ready[i].second[0]].begin(), pcs[ready[i].second[0]].end()) - pcs[ready[i].second[0]].begin(), path(arcs.size()));
+
+				for (size_t j = 0; j < pcs[ready[i].second[0]].size(); )
+				{
+					bool bad = false;
+					vector<petri_index> duplicates;
+					for (size_t k = 0; !bad && k < arcs.size(); k++)
+						if (arcs[k].first.is_place() && pcs[ready[i].second[0]][j].nodes[k] > 0)
+						{
+							if (find(duplicates.begin(), duplicates.end(), arcs[k].first) != duplicates.end())
+								bad = true;
+							else
+								duplicates.push_back(arcs[k].first);
+						}
+
+					if (bad)
+						pcs[ready[i].second[0]].erase(pcs[ready[i].second[0]].begin() + j);
+					else
+						j++;
+				}
+			}
+
+			// Increment all of the ready program counters
+			vector<int> n = outgoing(ready[i].first);
+			for (size_t j = 0; j < n.size(); j++)
+			{
+				// Duplicate program counters for both parallel and conditional splits
+				int pc = ready[i].second[0];
+				if (j < n.size()-1)
+				{
+					pc = pcs.size();
+					pcs.push_back(pcs[ready[i].second[0]]);
+				}
+
+				/* If this path ran into a from arc, then clear whatever
+				 * from list we have and save this particular arc.
+				 */
+				if (find(from.begin(), from.end(), n[j]) != from.end())
+				{
+					if (pcs[pc].size() > 1 || (pcs[pc].size() == 1 && pcs[pc][0].from.size() > 0))
+						pcs[pc] = vector<path>(1, path(arcs.size(), n[j], n[j]));
+					else
+						for (size_t k = 0; k < pcs[pc].size(); k++)
+							pcs[pc][k].from.push_back(n[j]);
+				}
+				/* Otherwise if the path's from list is currently clear and this arc is in parallel
+				 * with one of the from arcs and not in parallel with any of the to arcs, then we
+				 * save it to this path's from list.
+				 *
+				 * TODO This causes state variable insertion algorithm to create inconsistency.
+				 *
+				 * While this is technically true, there is a case where this causes the state variable
+				 * insertion algorithm to create inconsistency by inserting opposing transitions in parallel.
+				 */
+				/*else if (pcs[pc].size() == 1)
+				{
+					bool invalid = false;
+					for (size_t k = 0; !invalid && k < to.size(); k++)
+						if (are_parallel_siblings(to[k], n[j]))
+							invalid = true;
+
+					if (!invalid)
+						for (size_t k = 0; pcs[pc][0].from.size() == 0 && k < from.size(); k++)
+							if (are_parallel_siblings(from[k], n[j]))
+								pcs[pc][0].from.push_back(n[j]);
+				}*/
+
+				for (size_t k = 0; k < pcs[pc].size(); )
+				{
+					// Remove any paths from the program counters that have gone in circles
+					if (pcs[pc][k].nodes[n[j]] != 0)
+						pcs[pc].erase(pcs[pc].begin() + k);
+					// Otherwise, just increment it to the next arc
+					else
+					{
+						pcs[pc][k].to = vector<int>(1, n[j]);
+						k++;
+					}
+				}
+
+				/* If all of the paths in this program counter have gone in circles, just
+				 * delete the program counter
+				 */
+				if (pcs[pc].size() == 0)
+					remove.push_back(pc);
+			}
+		}
+
+		// remove the program counters erased by the merge
+		sort(remove.rbegin(), remove.rend());
+		remove.resize(unique(remove.begin(), remove.end()) - remove.begin());
+		for (size_t i = 0; i < remove.size(); i++)
+			pcs.erase(pcs.begin() + remove[i]);
+
+	} while (ready.size() > 0);
+
+	/* Add all of the valid paths, i.e. all of the paths that actually go from 'from' to 'to'
+	 * We have to check this because there will be paths left over waiting at parallel or
+	 * conditional merges that were never able to merge but aren't at a to arc or never found
+	 * a from arc.
+	 */
 	for (size_t i = 0; i < pcs.size(); i++)
-		result.insert(result.end(), pcs[i].begin(), pcs[i].end());
+		for (size_t j = 0; j < pcs[i].size(); j++)
+		{
+			for (size_t k = 0; k < pcs[i][j].from.size(); k++)
+				pcs[i][j].nodes[pcs[i][j].from[k]] = 0;
 
-	sort(result.begin(), result.end());
-	result.resize(unique(result.begin(), result.end()) - result.begin());
+			if (vector_intersection_size(&pcs[i][j].from, &from) != 0 && vector_intersection_size(&pcs[i][j].to, &to) != 0)
+				result->paths.push_back(pcs[i][j]);
+		}
 
-	return result;
+	/* We need to fix up the total count for the resulting path space
+	 * because we added a bunch of new paths.
+	 */
+	result->repair();
+
+	//result->export_dot(this).print();
 }
 
 void petri_net::zero_paths(path_space *paths, petri_index from)
@@ -1282,31 +1354,43 @@ petri_index petri_net::get_split_place(petri_index merge_place, vector<bool> *co
 	return i;
 }
 
-void petri_net::remove_invalid_split_points(pair<int, int> up_sense_count, vector<petri_index> up_start, path_space *up_paths, pair<int, int> down_sense_count, vector<petri_index> down_start, path_space *down_paths)
+/**
+ * Given a set of up paths and down paths that we want to cut using state variable transitions,
+ * we need to filter out arcs on the path that we aren't actually allowed to cut.
+ *
+ * The following cases need to be filtered out:
+ *  - arcs between the place of a conditional split and the guarding transitions of that conditional
+ *  - arcs that are in or are in parallel with both up and down path sets
+ *
+ * @param up_start
+ * @param up_paths
+ * @param down_start
+ * @param down_paths
+ */
+void petri_net::remove_invalid_split_points(vector<petri_index> up_start, path_space *up_paths, vector<petri_index> down_start, path_space *down_paths)
 {
-	path_space up_inv = up_paths->inverse();
-	path_space down_inv = down_paths->inverse();
+	path up_mask = up_paths->inverse().get_mask();
+	path down_mask = down_paths->inverse().get_mask();
+	up_mask.nodes.resize(arcs.size(), 0);
+	down_mask.nodes.resize(arcs.size(), 0);
 
-	path up_mask = up_inv.get_mask();
-	path down_mask = down_inv.get_mask();
+	for (size_t i = 0; i < arcs.size(); i++)
+		for (size_t j = i+1; j < arcs.size(); j++)
+			if (up_mask.nodes[i] == 0 && down_mask.nodes[j] == 0 &&
+			   (up_mask.nodes[j] != 0 || down_mask.nodes[i] != 0) &&
+			   are_parallel_siblings(i, j))
+			{
+				up_mask.nodes[j] = 0;
+				down_mask.nodes[i] = 0;
+			}
 
+	// TODO add a heuristic to choose which (up or down) one gets masked out
 	up_paths->apply_mask(down_mask);
-	down_paths->apply_mask(up_mask);
+	//down_paths->apply_mask(up_mask);
 
-	if (up_sense_count.first != 0)
-		zero_paths(up_paths, up_start);
+	// TODO conditional merge issue
 
-	if (down_sense_count.second != 0)
-		zero_paths(down_paths, down_start);
-
-	for (size_t j = 0; j < up_paths->total.to.size(); j++)
-		if (arcs[up_paths->total.to[j]].second.is_place())
-			up_paths->zero(up_paths->total.to[j]);
-
-	for (size_t j = 0; j < down_paths->total.to.size(); j++)
-		if (arcs[down_paths->total.to[j]].second.is_place())
-			down_paths->zero(down_paths->total.to[j]);
-
+	// arcs between the place of a conditional split and the guarding transitions of that conditional
 	for (int j = 0; j < (int)arcs.size(); j++)
 		if (arcs[j].first.is_place() && next(arcs[j].first).size() > 1)
 		{
@@ -1379,80 +1463,67 @@ void petri_net::add_conflict_pair(map<petri_index, list<vector<petri_index> > > 
 		c->insert(pair<petri_index, list<vector<petri_index> > >(i, list<vector<petri_index> >(1, vector<petri_index>(1, j))));
 }
 
-void petri_net::generate_paths(pair<int, int> *up_sense_count, vector<petri_index> up_start, path_space *up_paths, pair<int, int> *down_sense_count, vector<petri_index> down_start,  path_space *down_paths)
+void petri_net::generate_paths(vector<petri_index> up_start, path_space *up_paths, vector<petri_index> down_start,  path_space *down_paths)
 {
+	progress("", name + " -- generate_paths: ...", __FILE__, __LINE__);
+
 	down_paths->clear();
 	up_paths->clear();
-	vector<int> iin = incoming(up_start);
-	vector<int> jin = incoming(down_start);
-
-	pair<int, int> swap_sense_count;
-	path_space swap_path_space(arcs.size());
-
-	*up_sense_count = get_input_sense_count(up_start);
-	*down_sense_count = get_input_sense_count(down_start);
-
-	if (up_sense_count->second > up_sense_count->first && down_sense_count->first > down_sense_count->second)
+	vector<int> iin, jin;
+	for (size_t i = 0; i < arcs.size(); i++)
 	{
-		get_paths(iin, jin, up_paths);
-		get_paths(jin, iin, down_paths);
-	}
-	else if (up_sense_count->first > up_sense_count->second && down_sense_count->second > down_sense_count->first)
-	{
-		get_paths(iin, jin, down_paths);
-		get_paths(jin, iin, up_paths);
-		swap_sense_count = *up_sense_count;
-		*up_sense_count = *down_sense_count;
-		*down_sense_count = swap_sense_count;
-	}
-	else
-	{
-		get_paths(iin, jin, up_paths);
-		get_paths(jin, iin, down_paths);
+		if (find(up_start.begin(), up_start.end(), arcs[i].first) != up_start.end() ||
+			find(up_start.begin(), up_start.end(), arcs[i].second) != up_start.end())
+			iin.push_back(i);
 
-		if (up_sense_count->second > up_sense_count->first && down_sense_count->second > down_sense_count->first && up_paths->length() > down_paths->length())
-		{
-			swap_path_space = *up_paths;
-			*up_paths = *down_paths;
-			*down_paths = swap_path_space;
-			swap_sense_count = *up_sense_count;
-			*up_sense_count = *down_sense_count;
-			*down_sense_count = swap_sense_count;
-		}
-		else if (up_sense_count->first > up_sense_count->second && down_sense_count->first > down_sense_count->second && down_paths->length() > up_paths->length())
-		{
-			swap_path_space = *up_paths;
-			*up_paths = *down_paths;
-			*down_paths = swap_path_space;
-			swap_sense_count = *up_sense_count;
-			*up_sense_count = *down_sense_count;
-			*down_sense_count = swap_sense_count;
-		}
+		if (find(down_start.begin(), down_start.end(), arcs[i].first) != down_start.end() ||
+			find(down_start.begin(), down_start.end(), arcs[i].second) != down_start.end())
+			jin.push_back(i);
 	}
+
+	get_paths(iin, jin, up_paths);
+	get_paths(jin, iin, down_paths);
+
+	done_progress();
 }
 
+/**
+ * Figure out what groups of places conflict with what other groups. We are going
+ * to need to separate these groups with state variable transitions. This algorithm
+ * is O(N^2) with the number of places.
+ */
 void petri_net::generate_conflicts()
 {
-	map<int, list<vector<int> > >::iterator ri;
-	list<vector<int> >::iterator li;
-	vector<list<vector<int> >::iterator > gi;
-	map<int, int>::iterator bi, bj;
-	vector<int> group;
-	vector<int> temp;
+	progress("", name + " -- generate_conflicts: ...", __FILE__, __LINE__);
 
 	conflicts.clear();
 	indistinguishable.clear();
 
 	for (petri_index i(0, true); i < S.size(); i++)
 	{
-		//cout << i << "/" << S.size() << endl;
+		// The transitions for which the place i is an implicant
 		vector<petri_index> oi = next(i);
 
+		// Get intersection of those transitions
 		minterm ti = 1;
 		for (size_t j = 0; j < oi.size(); j++)
 			if (at(oi[j]).active)
 				ti &= at(oi[j]).predicate.terms[0];
 
+		/* We need to hide all of the variables from a given term whose values
+		 * in that term are changed by those transitions because that means that
+		 * we cannot use those variables to separate this implicant place from
+		 * any other place.
+		 *
+		 * si will contain all of the terms such that affected variables for a term
+		 * have the value NULL.
+		 * st will contain all of the terms such that unaffected variables for a term
+		 * have the value NULL.
+		 *
+		 * Keep in mind that if a variable's value is unknown in the implicant state and
+		 * affected by the transition, it should be counted as affected. However, neither
+		 * si nor st will have a NULL value for that variable.
+		 */
 		canonical nti = ~ti;
 		canonical si, st;
 		for (size_t j = 0; j < at(i).predicate.terms.size(); j++)
@@ -1463,8 +1534,19 @@ void petri_net::generate_conflicts()
 
 		for (size_t k = 0, l = 0; k < si.terms.size() && l < at(i).predicate.terms.size(); l++)
 		{
+			/* We need to ignore state encodings for which all of these transitions are vacuous
+			 * This will happen when si has no NULL values and st has NULL values for all of
+			 * the transitions' variables.
+			 *
+			 * NOTE: It is sufficient for now to check that st has at least one NULL value because
+			 * if a place has more than one output transition, all of those transitions will be guards
+			 * and none of them will be active.
+			 */
 			if (si.terms[k] != 0 && st.terms[l] == 0)
 				si.terms.erase(si.terms.begin() + k);
+			/* Otherwise if at least one of these transitions are not vacuous, we need to hide
+			 * the affected variables. By turning all NULL values to X.
+			 */
 			else
 			{
 				si.terms[k] = si.terms[k].xoutnulls() | at(i).predicate.terms[l];
@@ -1472,32 +1554,37 @@ void petri_net::generate_conflicts()
 			}
 		}
 
+		// Now that we have the value for si, we need to check that against all of the other places
 		for (petri_index j(0, true); j < S.size(); j++)
 		{
+			// that aren't i
 			if (i != j)
 			{
-				canonical sj = get_effective_place_encoding(j, vector<petri_index>(1, i));
+				// We need to keep all of the guards between i and j in mind
+				canonical sj = at(j).effective;//get_effective(i, j);
 
-				/* States are indistinguishable if:
-				 *  - they are not the same state
+				canonical sboth = si & sj;
+
+				/* Places are indistinguishable if:
+				 *  - they are not the same place
 				 *  	> i != j
-				 *  - the two states do not exist in parallel
+				 *  - the two places do not exist in parallel
 				 *  	> are_parallel_siblings(i, j) < 0
-				 *  - the two state encodings are not mutually exclusive
-				 *    taking into account the inactive firings between them
-				 *  	> si & get_effective_place_encoding(j, vector<petri_index>(1, i)) != 0
+				 *  - the two effective state encodings (see above) are not mutually exclusive
+				 *  	> si & sj != 0
 				 */
-				if (!are_parallel_siblings(i, j) && !is_mutex(&si, &sj))
+				if (!are_parallel_siblings(i, j) && sboth != 0)
 				{
+					// The transitions for which the place j is an implicant
 					vector<petri_index> oj = next(j);
+
+					// Get intersection of those transitions
 					minterm tj = 1;
 					for (size_t k = 0; k < oj.size(); k++)
 						if (at(oj[k]).active)
 							tj &= at(oj[k]).predicate.terms[0];
-					canonical ntj = ~tj;
-					canonical jtj = (sj >> tj);
 
-					//cout << "CONFLICT " << i.name() << "=" << si.print(vars) << "," << ti.print(vars) << " " << j.name() << "=" << sj.print(vars) << "," << tj.print(vars) << endl;
+					canonical jtj = (sboth >> tj);
 
 					/* States are conflicting if:
 					 *  - they are indistinguishable
@@ -1506,7 +1593,7 @@ void petri_net::generate_conflicts()
 					 *  - the transition which causes the conflict is not a vacuous firing in the other state
 					 *  - the transition which causes the conflict would not normally happen anyways as a result of the other state
 					 */
-					if (!is_mutex(&nti, &at(i).predicate, &jtj))
+					if (!is_mutex(&nti, &jtj))
 					{
 						if (!are_sibling_guards(i, j))
 							add_conflict_pair(&conflicts, i, j);
@@ -1519,6 +1606,8 @@ void petri_net::generate_conflicts()
 			}
 		}
 	}
+
+	done_progress();
 
 	max_indistinguishables = 0;
 	for (map<petri_index, list<vector<petri_index> > >::iterator l = indistinguishable.begin(); l != indistinguishable.end(); l++)
@@ -1533,17 +1622,21 @@ bool petri_net::solve_conflicts()
 	if (conflicts.size() == 0)
 		return false;
 
-	log("", "process \'" + name + "\'", __FILE__, __LINE__);
+	//export_dot(0, 0).print();
+
+	bool has_error = false;
+
+	progress("", name + " -- solve_conflicts: finding split points", __FILE__, __LINE__);
 	for (map<petri_index, list<vector<petri_index> > >::iterator i = conflicts.begin(); i != conflicts.end(); i++)
 	{
 		for (list<vector<petri_index> >::iterator lj = i->second.begin(); lj != i->second.end(); lj++)
 		{
 			path_space up_paths(arcs.size()), down_paths(arcs.size());
-			pair<int, int> up_sense_count, down_sense_count;
 			vector<int> uptrans, downtrans;
 
-			generate_paths(&up_sense_count, vector<petri_index>(1, i->first), &up_paths, &down_sense_count, *lj, &down_paths);
-			remove_invalid_split_points(up_sense_count, vector<petri_index>(1, i->first), &up_paths, down_sense_count, *lj, &down_paths);
+			generate_paths(vector<petri_index>(1, i->first), &up_paths, *lj, &down_paths);
+			remove_invalid_split_points(vector<petri_index>(1, i->first), &up_paths, *lj, &down_paths);
+
 
 			up_paths.print_bounds("Up");
 			uptrans = choose_split_points(&up_paths);
@@ -1554,7 +1647,10 @@ bool petri_net::solve_conflicts()
 			vector_symmetric_compliment(&uptrans, &downtrans);
 
 			if (uptrans.size() == 0 || downtrans.size() == 0)
+			{
 				error("", "no solution in process '" + name + "' for the conflict set: " + to_string(i->first) + " -> " + to_string(*lj), "", __FILE__, __LINE__);
+				has_error = true;
+			}
 			else if (uptrans <= downtrans)
 				ip.push_back(pair<vector<int>, vector<int> >(uptrans, downtrans));
 			else if (downtrans <= uptrans)
@@ -1566,43 +1662,66 @@ bool petri_net::solve_conflicts()
 	if (ip.size() == 0)
 		return false;
 
-	vector<int> reset_arcs = outgoing(M0);
-	sort(ip.begin(), ip.end());
-	ip.resize(unique(ip.begin(), ip.end()) - ip.begin());
-	for (size_t j = 0; j < ip.size(); j++)
+	if (!has_error)
 	{
-		string vname = vars.unique_name();
-		vars.globals.push_back(variable(vname));
-		vars.globals.back().written = true;
-
-		canonical um = canonical(vars.globals.size()-1, 1);
-		canonical dm = canonical(vars.globals.size()-1, 0);
-
-		for (int k = 0; k < (int)ip[j].first.size(); k++)
-			insert(ip[j].first[k], um, true);
-		for (int k = 0; k < (int)ip[j].second.size(); k++)
-			insert(ip[j].second[k], dm, true);
-
-		path_space up_paths(arcs.size()), down_paths(arcs.size());
-		get_paths(ip[j].first, ip[j].second, &up_paths);
-		get_paths(ip[j].second, ip[j].first, &down_paths);
-
-		int up_coverage = 0;
-		int down_coverage = 0;
-
-		for (size_t k = 0; k < reset_arcs.size(); k++)
+		vector<int> reset_arcs = outgoing(M0);
+		sort(ip.begin(), ip.end());
+		ip.resize(unique(ip.begin(), ip.end()) - ip.begin());
+		string str;
+		for (size_t j = 0; j < ip.size(); j++)
 		{
-			up_coverage += up_paths.coverage_count(reset_arcs[k]);
-			down_coverage += down_paths.coverage_count(reset_arcs[k]);
+			if (j != 0)
+				str += ", ";
+
+			vector<petri_arc> up_out, down_out;
+
+			for (int k = 0; k < (int)ip[j].first.size(); k++)
+				up_out.push_back(arcs[ip[j].first[k]]);
+			for (int k = 0; k < (int)ip[j].second.size(); k++)
+				down_out.push_back(arcs[ip[j].second[k]]);
+
+			str += "{up:" + to_string(up_out) + " down:" + to_string(down_out) + "}";
 		}
 
-		if (up_coverage > 0 && down_coverage == 0)
-			reset &= minterm(vars.globals.size()-1, 1);
-		else if (down_coverage > 0 && up_coverage == 0)
-			reset &= minterm(vars.globals.size()-1, 0);
+		progress("", name + " -- solve_conflicts: inserting state variables " + str, __FILE__, __LINE__);
 
-		log("", "inserting " + vname + " up arcs = " + to_string(ip[j].first) + " down arcs = " + to_string(ip[j].second), __FILE__, __LINE__);
+		vector<size_t> vids;
+		for (size_t j = 0; j < ip.size(); j++)
+		{
+			string vname = vars.unique_name();
+			vids.push_back(vars.globals.size());
+			vars.globals.push_back(variable(vname));
+			vars.globals.back().written = true;
+
+			path_space up_paths(arcs.size()), down_paths(arcs.size());
+			get_paths(ip[j].first, ip[j].second, &up_paths);
+			get_paths(ip[j].second, ip[j].first, &down_paths);
+
+			int up_coverage = 0;
+			int down_coverage = 0;
+
+			for (size_t k = 0; k < reset_arcs.size(); k++)
+			{
+				up_coverage += up_paths.coverage_count(reset_arcs[k]);
+				down_coverage += down_paths.coverage_count(reset_arcs[k]);
+			}
+
+			if (up_coverage > 0 && down_coverage == 0)
+				reset &= minterm(vids.back(), 1);
+			else if (down_coverage > 0 && up_coverage == 0)
+				reset &= minterm(vids.back(), 0);
+		}
+
+		for (size_t j = 0; j < ip.size(); j++)
+		{
+			for (int k = 0; k < (int)ip[j].first.size(); k++)
+				insert(ip[j].first[k], canonical(vids[j], 1), true);
+			for (int k = 0; k < (int)ip[j].second.size(); k++)
+				insert(ip[j].second[k], canonical(vids[j], 0), true);
+		}
 	}
+
+	done_progress();
 
 	return true;
 }
@@ -1737,7 +1856,7 @@ void petri_net::compact()
 			}
 	}
 
-	// Fix the conflict detection bug where if a transition has multiple ingoing and outgoing arcs
+	// Fix the conflict detection bug where if a node has multiple ingoing and outgoing arcs
 	// and affects a channel variable, it can create an invisible conflict in the state after the
 	// transition but before the parallel split
 	change = true;
@@ -1764,198 +1883,52 @@ void petri_net::compact()
 				change = true;
 			}
 		}
-	}
-}
 
-void petri_net::generate_observed()
-{
-	for (size_t i = 0; i < S.size(); i++)
-		S[i].observed.clear();
-	for (size_t i = 0; i < T.size(); i++)
-		T[i].observed.clear();
-
-	vector<pair<petri_index, bool> > counters;
-	for (size_t i = 0; i < M0.size(); i++)
-	{
-		size_t input_size = prev(M0[i]).size();
-		if (input_size == 0)
-			input_size = 1;
-
-		for (size_t j = 0; j < input_size; j++)
-			counters.push_back(pair<petri_index, bool>(M0[i], false));
-	}
-
-	bool done = false;
-	while (!done)
-	{
-		//for (size_t i = 0; i < counters.size(); i++)
-		//	cout << counters[i].first << ":" << counters[i].second << " ";
-		//cout << endl;
-
-		vector<int> movable;
-		for (size_t i = 0; i < counters.size(); i++)
+		for (size_t i = 0; i < S.size(); i++)
 		{
-			vector<petri_index> p = prev(counters[i].first);
-			size_t total = 1;
-			for (size_t j = i+1; j < counters.size(); j++)
-				if (counters[j].first == counters[i].first)
-					total++;
-
-			if (total >= p.size())
+			size_t os = outgoing(petri_index(i, true)).size();
+			size_t is = incoming(petri_index(i, true)).size();
+			if (os > 1 && is > 1)
 			{
-				for (size_t j = i+1; j < counters.size(); )
-				{
-					if (counters[j].first == counters[i].first)
-					{
-						counters[i].second = counters[i].second && counters[j].second;
-						counters.erase(counters.begin() + j);
-					}
-					else
-						j++;
-				}
-
-				movable.push_back(i);
+				insert_after(petri_index(i, true), 1, true);
+				change = true;
 			}
 		}
-
-		for (size_t i = 0; i < movable.size(); i++)
-		{
-			map<vector<petri_index>, canonical> old = at(counters[movable[i]].first).observed;
-			at(counters[movable[i]].first).observed.clear();
-			if (!counters[movable[i]].second && counters[movable[i]].first.is_place())
-			{
-				vector<petri_index> s;
-				s.push_back(counters[movable[i]].first);
-				at(counters[movable[i]].first).observed.insert(pair<vector<petri_index>, canonical>(s, canonical()));
-
-				vector<petri_index> inputs = prev(counters[movable[i]].first);
-				for (size_t j = 0; j < inputs.size(); j++)
-				{
-					for (map<vector<petri_index>, canonical>::iterator k = at(inputs[j]).observed.begin(); k != at(inputs[j]).observed.end(); k++)
-					{
-						map<vector<petri_index>, canonical>::iterator l = at(counters[movable[i]].first).observed.find(k->first);
-						canonical c = (k->second | ~at(inputs[j]).predicate);
-						if (l != at(counters[movable[i]].first).observed.end())
-							l->second &= c;
-						else
-							at(counters[movable[i]].first).observed.insert(pair<vector<petri_index>, canonical>(k->first, c));
-					}
-				}
-			}
-			else if (!counters[movable[i]].second && counters[movable[i]].first.is_trans())
-			{
-				vector<petri_index> inputs = prev(counters[movable[i]].first);
-				vector<map<vector<petri_index>, canonical> > in_observed;
-				vector<vector<petri_index> > state_set;
-				for (size_t j = 0; j < inputs.size(); j++)
-				{
-					in_observed.push_back(at(inputs[j]).observed);
-					for (map<vector<petri_index>, canonical>::iterator k = at(inputs[j]).observed.begin(); k != at(inputs[j]).observed.end(); k++)
-						state_set.push_back(k->first);
-				}
-				sort(state_set.begin(), state_set.end());
-				state_set.resize(unique(state_set.begin(), state_set.end()) - state_set.begin());
-
-				//cout << "\tCommon States ";
-				for (size_t j = 0; j < state_set.size(); j++)
-				{
-					canonical c = 0;
-					bool found = true;
-					for (size_t k = 0; found && k < in_observed.size(); k++)
-					{
-						map<vector<petri_index>, canonical>::iterator l = in_observed[k].find(state_set[j]);
-						if (l == in_observed[k].end())
-							found = false;
-						else
-							c |= l->second;
-					}
-
-					if (found)
-					{
-						//cout << state_set[j] << " ";
-						at(counters[movable[i]].first).observed.insert(pair<vector<petri_index>, canonical>(state_set[j], c));
-						for (size_t k = 0; k < in_observed.size(); k++)
-							in_observed[k].erase(in_observed[k].find(state_set[j]));
-					}
-				}
-				//cout << endl;
-
-				vector<map<vector<petri_index>, canonical>::iterator> j;
-				for (size_t k = 0; k < in_observed.size(); )
-				{
-					if (in_observed[k].size() > 0)
-					{
-						j.push_back(in_observed[k].begin());
-						k++;
-					}
-					else
-						in_observed.erase(in_observed.begin() + k);
-				}
-
-				while (j.size() > 0 && j.back() != in_observed.back().end())
-				{
-					vector<petri_index> s;
-					canonical c = 0;
-					//cout << "\t";
-					for (size_t k = 0; k < j.size(); k++)
-					{
-						//cout << j[k]->first << " ";
-						s.insert(s.end(), j[k]->first.begin(), j[k]->first.end());
-						c |= j[k]->second;
-					}
-					//cout << endl;
-
-					sort(s.begin(), s.end());
-					s.resize(unique(s.begin(), s.end()) - s.begin());
-
-					map<vector<petri_index>, canonical>::iterator z = at(counters[movable[i]].first).observed.find(s);
-					if (z != at(counters[movable[i]].first).observed.end())
-						z->second &= c;
-					else
-						at(counters[movable[i]].first).observed.insert(pair<vector<petri_index>, canonical>(s, c));
-
-					j[0]++;
-					for (size_t k = 0; j[k] == in_observed[k].end() && k < in_observed.size()-1; k++)
-					{
-						j[k] = in_observed[k].begin();
-						j[k+1]++;
-					}
-				}
-			}
-
-			if (!counters[movable[i]].second && at(counters[movable[i]].first).observed == old)
-				counters[movable[i]].second = true;
-
-			vector<petri_index> n = next(counters[movable[i]].first);
-			for (size_t j = n.size()-1; j >= 0 && j < n.size(); j--)
-			{
-				if (j > 0)
-					counters.push_back(pair<petri_index, bool>(n[j], counters[movable[i]].second));
-				else
-					counters[movable[i]].first = n[j];
-			}
-		}
-
-		done = true;
-		for (size_t i = 0; done && i < counters.size(); i++)
-			if (!counters[i].second)
-				done = false;
 	}
-
-	//cout << "Observed" << endl;
-	//for (size_t i = 0; i < S.size(); i++)
-	//{
-	//	cout << petri_index(i, true) << endl;
-	//	for (map<vector<petri_index>, canonical>::iterator j = S[i].observed.begin(); j != S[i].observed.end(); j++)
-	//		cout << "\t" << j->first << ": " << j->second.print(vars) << endl;
-	//}
 }
 
 /**
- * Initializes a petri state given a single place. The resulting state
- * is one that has an index at the given place and then enough indices
- * at each parent parallel merge point to allow through travel of the
- * first index.
+ * Given the base set of node markings, this returns that base set along with the
+ * minimal set of node markings required to allow this base set to traverse through
+ * all merges it will encounter going either forward or backward.
+ *
+ * In general, conditional splits create a new execution and parallel splits
+ * create a new program counter. Then conditional merges are ignored and
+ * program counters at parallel merges must wait for a program counter at every
+ * incoming arc to that merge before making progress. However, this can be
+ * switched using the conditional flag.
+ *
+ * TODO well formed input assumption
+ *
+ * This function makes one assumption about the format of the input. That is
+ * that you cannot have markings stuck at more than one merge in series.
+ * For example (markings are designated by [brackets])
+ *
+ *        P1--T1--[P2]          P6--T5--P7
+ *       /          \          /          \
+ * P0--T0            T3--P5--T4            T7--P10
+ *       \          /          \          /
+ *        P3--T2--P4            P8--T6--[P9]
+ *
+ * If the input breaks this assumption, like in this example, the result will be the
+ * insertion of an unnecessary marking at each merge not first in the series. For example
+ * in this example, there will be an unnecessary marking inserted at P7 and a necessary
+ * marking inserted at the arc P4.
+ *
+ * @param base set of node markings
+ * @param backward iteration instead of forward iteration
+ * @param conditional merges instead of parallel merges
+ * @return minimal set of markings to prevent deadlock
  */
 vector<petri_index> petri_net::get_cut(vector<petri_index> base, bool backward, bool conditional)
 {
@@ -1963,38 +1936,97 @@ vector<petri_index> petri_net::get_cut(vector<petri_index> base, bool backward, 
 	result.insert(result.end(), base.begin(), base.end());
 	list<pair<vector<petri_index>, vector<bool> > > execs(1, pair<vector<petri_index>, vector<bool> >(base, vector<bool>(S.size() + T.size(), false)));
 
-	/**
-	 * Run through all possible executions from the starting index
-	 * looking for deadlock.
-	 */
+	// Run through all possible executions from the starting index looking for deadlock.
 	for (list<pair<vector<petri_index>, vector<bool> > >::iterator exec = execs.begin(); exec != execs.end(); exec = execs.erase(exec))
 	{
 		//cout << "\tStart Execution" << endl;
 		bool done = false;
 		while (!done)
 		{
+			vector<pair<petri_index, vector<size_t> > > merge_movable;
+			vector<petri_index> merge_stuck;
 			vector<size_t> movable;
+
+			/* Figure out where we can move next and check to see if there are any markings
+			 * at locations that are unaffected by merges (normally places because conditional
+			 * merges are ignored, however this can be switched using the conditional flag).
+			 */
+			vector<petri_index> n;
 			for (size_t i = 0; i < exec->first.size(); i++)
 			{
-				vector<petri_index> n = backward ? prev(exec->first[i]) : next(exec->first[i]);
 				if ((!conditional && exec->first[i].is_place()) || (conditional && exec->first[i].is_trans()))
 				{
-					size_t total = 0;
-					for (size_t k = i; k < exec->first.size(); k++)
-						if ((backward ? prev(exec->first[k]) : next(exec->first[k]))[0] == n[0])
-							total++;
-
-					vector<petri_index> temp = (backward ? next(n) : prev(n));
-					sort(temp.begin(), temp.end());
-					temp.resize(unique(temp.begin(), temp.end()) - temp.begin());
-					if (total == temp.size())
-						movable.push_back(i);
+					vector<petri_index> temp = backward ? prev(exec->first[i]) : next(exec->first[i]);
+					n.insert(n.end(), temp.begin(), temp.end());
 				}
 				else
 					movable.push_back(i);
 			}
 
-			if (movable.size() != 0)
+			// n is sorted in ascending order
+			// the program counters are sorted in ascending order
+			sort(n.begin(), n.end());
+			sort(exec->first.begin(), exec->first.end());
+			n.resize(unique(n.begin(), n.end()) - n.begin());
+
+			/* If there aren't any markings at locations unaffected by merges, then loop through
+			 * the set of next possible moves and figure out which ones aren't stuck at a merge.
+			 * For the ones that are stuck at a merge, record which incoming markings are needed
+			 * to unstick it.
+			 */
+			if (movable.size() == 0)
+			{
+				for (size_t i = 0; i < n.size(); i++)
+				{
+					// p is sorted in descending order so we need to reverse it
+					vector<petri_index> p = backward ? next(n[i]) : prev(n[i]);
+					reverse(p.begin(), p.end());
+
+					// check to see if the program counters cover all required nodes in p
+					vector<size_t> count;
+					bool found = false;
+					size_t k = 0;
+					for (size_t j = 0; j < exec->first.size() && k < p.size(); )
+					{
+						if (exec->first[j] < p[k])
+							j++;
+						else if (p[k] < exec->first[j])
+						{
+							if (!found)
+								merge_stuck.push_back(p[k]);
+
+							k++;
+							found = false;
+						}
+						else
+						{
+							count.push_back(j);
+							j++;
+							found = true;
+						}
+					}
+
+					if (k+1 < p.size())
+						merge_stuck.insert(merge_stuck.end(), p.begin() + k+1, p.end());
+
+					/* easiest way is to count them up, but there may be duplicates
+					 * the duplicates are intentional since it allows me to remove them
+					 * from the execution later.
+					 */
+					vector<size_t> temp = count;
+					temp.resize(unique(temp.begin(), temp.end()) - temp.begin());
+
+					if (temp.size() == p.size())
+						merge_movable.push_back(pair<petri_index, vector<size_t> >(n[i], count));
+				}
+			}
+
+			/* If we aren't deadlocked, then we can check
+			 * if the program counters have looped around and already covered
+			 * the locations they are currently at. If everything has been covered
+			 * then we are done.
+			 */
+			if (movable.size() != 0 || merge_movable.size() != 0)
 			{
 				// Check to see if we are done here...
 				done = true;
@@ -2010,76 +2042,191 @@ vector<petri_index> petri_net::get_cut(vector<petri_index> base, bool backward, 
 			//cout << "\t" << movable.size() << exec->first << endl;
 
 			/* If we are not done, handle the next set of movements
-			 * duplicating executions or indices when necessary.
+			 * duplicating executions or program counters when necessary.
 			 */
-			for (size_t i = 0; !done && i < movable.size(); i++)
+			if (!done && movable.size() > 0)
 			{
-				if ((!conditional && exec->first[movable[i]].is_place()) || (conditional && exec->first[movable[i]].is_trans()))
+				// Handle the markings at locations unaffected by merges
+				for (size_t i = 0; i < movable.size(); i++)
 				{
-					for (size_t k = movable[i]+1; k < exec->first.size(); )
+					vector<petri_index> n = backward ? prev(exec->first[movable[i]]) : next(exec->first[movable[i]]);
+					for (size_t k = 0; k < n.size(); k++)
 					{
-						if ((backward && prev(exec->first[k])[0] == prev(exec->first[movable[i]])[0]) ||
-						   (!backward && next(exec->first[k])[0] == next(exec->first[movable[i]])[0]))
-						{
-							for (size_t j = i+1; j < movable.size(); j++)
-								if (movable[j] > k)
-									movable[j]--;
-
-							exec->first.erase(exec->first.begin() + k);
-						}
-						else
-							k++;
-					}
-				}
-
-				vector<petri_index> n = backward ? prev(exec->first[movable[i]]) : next(exec->first[movable[i]]);
-				for (size_t k = n.size()-1; k >= 0 && k < n.size(); k--)
-				{
-					if (k > 0)
-					{
-						if ((!conditional && exec->first[movable[i]].is_place()) || (conditional && exec->first[movable[i]].is_trans()))
-						{
-							execs.push_back(*exec);
-							execs.back().first[movable[i]] = n[k];
-						}
-						else
+						if (k < n.size()-1)
 							exec->first.push_back(n[k]);
+						else
+							exec->first[movable[i]] = n[k];
 					}
-					else
-						exec->first[movable[i]] = n[k];
 				}
 			}
+			else if (!done && merge_movable.size() > 0)
+			{
+				// Handle the markings at locations that are affected by merges
 
+				/* Figure out which paths must be taken mutually exclusively. Two
+				 * paths cannot both be taken in one execution if they share input
+				 * markings because taking a path moves that input marking.
+				 */
+				vector<vector<size_t> > groupings;
+				for (size_t i = 0; i < merge_movable.size(); i++)
+				{
+					// Look for groups that share input markings with this next marking
+					vector<size_t> found;
+					for (size_t j = 0; j < groupings.size(); j++)
+						for (size_t k = 0; k < groupings[j].size(); k++)
+							if (vector_intersection_size(&merge_movable[groupings[j][k]].second, &merge_movable[i].second) > 0)
+								found.push_back(j);
+
+					sort(found.rbegin(), found.rend());
+					found.resize(unique(found.begin(), found.end()) - found.begin());
+
+					// If none were found, create a new one
+					if (found.size() == 0)
+						groupings.push_back(vector<size_t>(1, i));
+					else
+					{
+						// If more than one was found, merge them
+						for (size_t j = 0; j < found.size()-1; j++)
+						{
+							groupings[found[found.size()-1]].insert(groupings[found[found.size()-1]].end(), groupings[found[j]].begin(), groupings[found[j]].end());
+							groupings.erase(groupings.begin() + found[j]);
+						}
+
+						// insert this next marking into the final group and clean up
+						groupings[found[found.size()-1]].push_back(i);
+
+						sort(groupings[found[found.size()-1]].begin(), groupings[found[found.size()-1]].end());
+						groupings[found[found.size()-1]].resize(unique(groupings[found[found.size()-1]].begin(), groupings[found[found.size()-1]].end()) - groupings[found[found.size()-1]].begin());
+					}
+				}
+
+				/* There are cases in handshaking expansions where even though
+				 * structurally, there are possible paths, those paths are not actually
+				 * valid because of mutual exclusion guaranteed by the data. This happens
+				 * in Andrew Lines' implementation of a pchb split.
+				 *
+				 * *[
+				 *   (
+				 *    [  A.e & S.r.f & L.r.f -> A.r.f+
+				 *    [] A.e & S.r.f & L.r.t -> A.r.t+
+				 *    [] S.r.t -> skip                   <----- Here
+				 *    ]||
+				 *    [  B.e & S.r.t & L.r.f -> B.r.f+
+				 *    [] B.e & S.r.t & L.r.t -> B.r.t+
+				 *    [] S.r.f -> skip                   <----- Here
+				 *    ]
+				 *   ); S.e-, L.e-;
+				 *   (
+				 *    [~A.e | ~A.r.f & ~A.r.t -> A.r.f-, A.r.t-] ||
+				 *    [~B.e | ~B.r.f & ~B.r.t -> B.r.f-, B.r.t-]
+				 *   ); [~S.r.f & ~S.r.t & ~L.r.f & ~L.r.t -> S.e+, L.e+]
+				 *  ]
+				 *
+				 * S.r.f and S.r.t cannot both be true, so we need to ignore these cases. So
+				 * we first generate all the possible decisions we can make.
+				 */
+				vector<vector<size_t> > valid_paths;
+				vector<size_t> iter(groupings.size(), 0);
+				bool last = false;
+				while (!last)
+				{
+					last = true;
+					for (size_t i = 0; last && i < iter.size(); i++)
+						if (iter[i] < groupings[i].size()-1)
+							last = false;
+
+					valid_paths.push_back(iter);
+
+					iter[0]++;
+					for (size_t i = 0; i < iter.size()-1 && iter[i] >= groupings[i].size(); i++)
+					{
+						iter[i] = 0;
+						iter[i+1]++;
+					}
+				}
+
+				/* And then we remove the invalid paths (i.e. paths thats will result in
+				 * a pair of markings that are not in parallel).
+				 */
+				for (size_t i = 0; i < valid_paths.size(); )
+				{
+					// Generate the resulting marking set and store it in 'n'
+					bool valid = true;
+					vector<petri_index> n;
+					vector<size_t> used;
+					for (size_t j = 0; j < groupings.size(); j++)
+					{
+						n.push_back(merge_movable[groupings[j][valid_paths[i][j]]].first);
+						used.insert(used.end(), merge_movable[groupings[j][valid_paths[i][j]]].second.begin(), merge_movable[groupings[j][valid_paths[i][j]]].second.end());
+					}
+
+					sort(used.begin(), used.end());
+					used.resize(unique(used.begin(), used.end()) - used.begin());
+
+					for (size_t j = 0; j < exec->first.size(); j++)
+						if (find(used.begin(), used.end(), j) == used.end())
+							n.push_back(exec->first[j]);
+
+					sort(n.begin(), n.end());
+					n.resize(unique(n.begin(), n.end()) - n.begin());
+
+					// Check to make sure all-to-all parallelism holds
+					for (size_t j = 0; valid && j < n.size(); j++)
+						for (size_t k = j+1; valid && k < n.size(); k++)
+							if (!are_parallel_siblings(n[j], n[k]))
+								valid = false;
+
+					// If it doesn't, then remove this case
+					if (!valid)
+						valid_paths.erase(valid_paths.begin() + i);
+					else
+						i++;
+				}
+
+				/* Duplicate the execution once for each final possible path,
+				 * execute the necessary merges, and then take that path.
+				 */
+				for (size_t i = 0; i < valid_paths.size(); i++)
+				{
+					// Duplicate
+					list<pair<vector<petri_index>, vector<bool> > >::iterator temp_exec = exec;
+					if (i < valid_paths.size()-1)
+					{
+						execs.push_back(*exec);
+						temp_exec = execs.end();
+						temp_exec--;
+					}
+
+					// Take the path
+					vector<size_t> remove;
+					for (size_t j = 0; j < groupings.size(); j++)
+					{
+						temp_exec->first[merge_movable[groupings[j][valid_paths[i][j]]].second[0]] = merge_movable[groupings[j][valid_paths[i][j]]].first;
+
+						for (size_t k = merge_movable[groupings[j][valid_paths[i][j]]].second.size()-1; k > 0; k--)
+							remove.push_back(merge_movable[groupings[j][valid_paths[i][j]]].second[k]);
+					}
+
+					// Execute the merge
+					sort(remove.rbegin(), remove.rend());
+					remove.resize(unique(remove.begin(), remove.end()) - remove.begin());
+
+					for (size_t k = 0; k < remove.size(); k++)
+						temp_exec->first.erase(temp_exec->first.begin() + remove[k]);
+				}
+			}
 			/**
 			 * Every time deadlock is detected in the execution,
 			 * insert enough indices at the merge point to allow
 			 * execution to continue. Also, insert these indices
-			 * into the state we are trying to initialize.
+			 * into the output set.
 			 */
-			if (!done && movable.size() == 0)
+			else if (!done)
 			{
-				vector<petri_index> counts;
-				// Count up how many indices we already have at each merge point.
-				for (size_t i = 0; i < exec->first.size(); i++)
+				for (size_t i = 0; i < merge_stuck.size(); i++)
 				{
-					vector<petri_index> temp;
-					if (backward)
-						temp = next(prev(exec->first[i]));
-					else
-						temp = prev(next(exec->first[i]));
-
-					counts.insert(counts.end(), temp.begin(), temp.end());
-				}
-				sort(counts.begin(), counts.end());
-				counts.resize(unique(counts.begin(), counts.end()) - counts.begin());
-
-				for (size_t i = 0; i < counts.size(); i++)
-				{
-					if (find(exec->first.begin(), exec->first.end(), counts[i]) == exec->first.end())
-					{
-						exec->first.push_back(counts[i]);
-						result.push_back(counts[i]);
-					}
+					exec->first.push_back(merge_stuck[i]);
+					result.push_back(merge_stuck[i]);
 				}
 			}
 		}
@@ -2091,22 +2238,46 @@ vector<petri_index> petri_net::get_cut(vector<petri_index> base, bool backward, 
 }
 
 /**
- * Initializes a petri state given a single place. The resulting state
- * is one that has an index at the given place and then enough indices
- * at each parent parallel merge point to allow through travel of the
- * first index.
+ * Given the base set of arc markings, this returns that base set along with the
+ * minimal set of arc markings required to allow this base set to traverse through
+ * all merges it will encounter going either forward or backward.
+ *
+ * In general, conditional splits create a new execution and parallel splits
+ * create a new program counter. Then conditional merges are ignored and
+ * program counters at parallel merges must wait for a program counter at every
+ * incoming arc to that merge before making progress. However, this can be
+ * switched using the conditional flag.
+ *
+ * TODO well formed input assumption
+ *
+ * This function makes one assumption about the format of the input. That is
+ * that you cannot have markings stuck at more than one merge in series.
+ * For example (markings are designated by [brackets])
+ *
+ *        P1--T1--P2            P6--T5--P7
+ *       /         [\]         /          \
+ * P0--T0            T3--P5--T4            T7--P10
+ *       \          /          \         [/]
+ *        P3--T2--P4            P8--T6--P9
+ *
+ * If the input breaks this assumption, like in this example, the result will be the
+ * insertion of an unnecessary marking at each merge not first in the series. For example
+ * in this example, there will be an unnecessary marking inserted at the arc P7 -> T7
+ * and a necessary marking inserted at the arc P4 -> T3
+ *
+ * @param base set of arc markings
+ * @param backward iteration instead of forward iteration
+ * @param conditional merges instead of parallel merges
+ * @return minimal set of markings to prevent deadlock
  */
 vector<int> petri_net::get_arc_cut(vector<int> base, bool backward, bool conditional)
 {
-	//cout << "Getting Cut" << endl;
+	cout << "Getting Cut" << endl;
 	vector<int> result;
 	result.insert(result.end(), base.begin(), base.end());
 	list<pair<vector<int>, vector<bool> > > execs(1, pair<vector<int>, vector<bool> >(base, vector<bool>(arcs.size(), false)));
 
-	/**
-	 * Run through all possible executions from the starting index
-	 * looking for deadlock.
-	 */
+	// Run through all possible executions from the starting index looking for deadlock.
 	for (list<pair<vector<int>, vector<bool> > >::iterator exec = execs.begin(); exec != execs.end(); exec = execs.erase(exec))
 	{
 		//cout << "\tStart Execution" << endl;
@@ -2116,28 +2287,86 @@ vector<int> petri_net::get_arc_cut(vector<int> base, bool backward, bool conditi
 			sort(exec->first.begin(), exec->first.end());
 			exec->first.resize(unique(exec->first.begin(), exec->first.end()) - exec->first.begin());
 
+			vector<pair<petri_index, vector<size_t> > > merge_movable;
+			vector<int> merge_stuck;
 			vector<size_t> movable;
+
+			/* Figure out where we can move next and check to see if there are any markings
+			 * at locations that are unaffected by merges (normally arcs after places because
+			 * conditional merges are ignored, however this can be switched using the conditional flag).
+			 */
+			vector<petri_index> n;
 			for (size_t i = 0; i < exec->first.size(); i++)
 			{
-				petri_index n = backward ? arcs[exec->first[i]].first : arcs[exec->first[i]].second;
-				if ((conditional && n.is_place()) || (!conditional && n.is_trans()))
-				{
-					size_t total = 0;
-					for (size_t k = i; k < exec->first.size(); k++)
-						if ((backward ? arcs[exec->first[k]].first : arcs[exec->first[k]].second) == n)
-							total++;
-
-					vector<petri_index> temp = (backward ? next(n) : prev(n));
-					sort(temp.begin(), temp.end());
-					temp.resize(unique(temp.begin(), temp.end()) - temp.begin());
-					if (total == temp.size())
-						movable.push_back(i);
-				}
+				if ((!conditional && arcs[exec->first[i]].second.is_trans()) || (conditional && arcs[exec->first[i]].second.is_place()))
+					n.push_back(backward ? arcs[exec->first[i]].first : arcs[exec->first[i]].second);
 				else
 					movable.push_back(i);
 			}
 
-			if (movable.size() != 0)
+			// n is sorted in ascending order
+			// the program counters are sorted in ascending order
+			sort(n.begin(), n.end());
+			sort(exec->first.begin(), exec->first.end());
+			n.resize(unique(n.begin(), n.end()) - n.begin());
+
+			/* If there aren't any markings at locations unaffected by merges, then loop through
+			 * the set of next possible moves and figure out which ones aren't stuck at a merge.
+			 * For the ones that are stuck at a merge, record which incoming markings are needed
+			 * to unstick it.
+			 */
+			if (movable.size() == 0)
+			{
+				for (size_t i = 0; i < n.size(); i++)
+				{
+					// p is sorted in ascending order
+					vector<int> p = backward ? outgoing(n[i]) : incoming(n[i]);
+
+					// check to see if the program counters cover all required arcs in p
+					vector<size_t> count;
+					bool found = false;
+					size_t k = 0;
+					for (size_t j = 0; j < exec->first.size() && k < p.size(); )
+					{
+						if (exec->first[j] < p[k])
+							j++;
+						else if (p[k] < exec->first[j])
+						{
+							if (!found)
+								merge_stuck.push_back(p[k]);
+
+							k++;
+							found = false;
+						}
+						else
+						{
+							count.push_back(j);
+							j++;
+							found = true;
+						}
+					}
+
+					if (k+1 < p.size())
+						merge_stuck.insert(merge_stuck.end(), p.begin() + k+1, p.end());
+
+					/* easiest way is to count them up, but there may be duplicates
+					 * the duplicates are intentional since it allows me to remove them
+					 * from the execution later.
+					 */
+					vector<size_t> temp = count;
+					temp.resize(unique(temp.begin(), temp.end()) - temp.begin());
+
+					if (temp.size() == p.size())
+						merge_movable.push_back(pair<petri_index, vector<size_t> >(n[i], count));
+				}
+			}
+
+			/* If we aren't deadlocked, then we can check
+			 * if the program counters have looped around and already covered
+			 * the locations they are currently at. If everything has been covered
+			 * then we are done.
+			 */
+			if (movable.size() != 0 || merge_movable.size() != 0)
 			{
 				// Check to see if we are done here...
 				done = true;
@@ -2150,80 +2379,116 @@ vector<int> petri_net::get_arc_cut(vector<int> base, bool backward, bool conditi
 					exec->second[exec->first[i]] = true;
 			}
 
-			//cout << "\t" << movable.size() << exec->first << endl;
-
 			/* If we are not done, handle the next set of movements
-			 * duplicating executions or indices when necessary.
+			 * duplicating executions or program counters when necessary.
 			 */
-			for (size_t i = 0; !done && i < movable.size(); i++)
+			if (!done && movable.size() > 0)
 			{
-				petri_index c = backward ? arcs[exec->first[movable[i]]].first : arcs[exec->first[movable[i]]].second;
-				if ((conditional && c.is_place()) || (!conditional && c.is_trans()))
-				{
-					for (size_t k = movable[i]+1; k < exec->first.size(); )
-					{
-						if ((backward && arcs[exec->first[k]].first == c) ||
-						   (!backward && arcs[exec->first[k]].second == c))
-						{
-							for (size_t j = i+1; j < movable.size(); j++)
-								if (movable[j] > k)
-									movable[j]--;
+				vector<vector<int> > n(movable.size());
+				vector<vector<size_t> > valid_paths;
+				for (size_t i = 0; i < movable.size(); i++)
+					n[i] = backward ? prev_arc(exec->first[movable[i]]) : next_arc(exec->first[movable[i]]);
 
-							exec->first.erase(exec->first.begin() + k);
-						}
-						else
-							k++;
+				vector<size_t> iter(movable.size(), 0);
+				bool last = false;
+				while (!last)
+				{
+					last = true;
+					for (size_t i = 0; last && i < iter.size(); i++)
+						if (iter[i] < n[i].size()-1)
+							last = false;
+
+					valid_paths.push_back(iter);
+
+					iter[0]++;
+					for (size_t i = 0; i < iter.size()-1 && iter[i] >= n[i].size(); i++)
+					{
+						iter[i] = 0;
+						iter[i+1]++;
 					}
 				}
 
-				vector<int> n = backward ? prev_arc(exec->first[movable[i]]) : next_arc(exec->first[movable[i]]);
-				for (size_t k = n.size()-1; k >= 0 && k < n.size(); k--)
+				for (size_t i = 0; i < valid_paths.size(); i++)
 				{
-					if (k > 0)
+					// Generate the resulting marking set and store it in 'n'
+					bool valid = true;
+					vector<petri_index> test;
+					vector<size_t> used;
+					for (size_t j = 0; j < exec->first.size(); j++)
 					{
-						if ((conditional && c.is_trans()) || (!conditional && c.is_place()))
-						{
-							execs.push_back(*exec);
-							execs.back().first[movable[i]] = n[k];
-						}
+						vector<size_t>::iterator k = find(movable.begin(), movable.end(), j);
+						if (k != movable.end())
+							test.push_back(arcs[n[k-movable.begin()][valid_paths[i][k - movable.begin()]]].second);
 						else
-							exec->first.push_back(n[k]);
+							test.push_back(arcs[exec->first[j]].second);
 					}
+
+					sort(test.begin(), test.end());
+					test.resize(unique(test.begin(), test.end()) - test.begin());
+
+					// Check to make sure all-to-all parallelism holds
+					for (size_t j = 0; valid && j < test.size(); j++)
+						for (size_t k = j+1; valid && k < test.size(); k++)
+							if (!are_parallel_siblings(test[j], test[k]))
+								valid = false;
+
+					// If it doesn't, then remove this case
+					if (!valid)
+						valid_paths.erase(valid_paths.begin() + i);
 					else
-						exec->first[movable[i]] = n[k];
+						i++;
+				}
+
+				for (size_t i = 0; i < valid_paths.size(); i++)
+				{
+					list<pair<vector<int>, vector<bool> > >::iterator temp = exec;
+					if (i < valid_paths.size()-1)
+					{
+						execs.push_back(*exec);
+						temp = execs.end();
+						temp--;
+					}
+
+					for (size_t j = 0; j < iter.size(); j++)
+						temp->first[movable[j]] = n[j][valid_paths[i][j]];
 				}
 			}
+			else if (!done && merge_movable.size() > 0)
+			{
+				// Handle the markings at locations that are affected by merges
 
+				/* Since an arc cannot be in multiple merges, we don't have to worry about
+				 * grouping like we do in get_cut.
+				 */
+				for (size_t i = 0; i < merge_movable.size(); i++)
+				{
+					vector<int> n = backward ? incoming(merge_movable[i].first) : outgoing(merge_movable[i].first);
+
+					// Take the path
+					size_t j = 0;
+					for (j = 0; j < merge_movable[i].second.size() && j < n.size(); j++)
+						exec->first[merge_movable[i].second[j]] = n[j];
+
+					if (j < n.size())
+						for (; j < n.size(); j++)
+							exec->first.push_back(n[j]);
+					else if (j < merge_movable[i].second.size())
+						for (size_t k = merge_movable[i].second.size()-1; k >= j && k < merge_movable[i].second.size(); k--)
+							exec->first.erase(exec->first.begin() + merge_movable[i].second[k]);
+				}
+			}
 			/**
 			 * Every time deadlock is detected in the execution,
 			 * insert enough indices at the merge point to allow
 			 * execution to continue. Also, insert these indices
 			 * into the state we are trying to initialize.
 			 */
-			if (!done && movable.size() == 0)
+			else if (!done)
 			{
-				vector<int> counts;
-				// Count up how many indices we already have at each merge point.
-				for (size_t i = 0; i < exec->first.size(); i++)
+				for (size_t i = 0; i < merge_stuck.size(); i++)
 				{
-					vector<int> temp;
-					if (backward)
-						temp = next_arc(prev_arc(exec->first[i]));
-					else
-						temp = prev_arc(next_arc(exec->first[i]));
-
-					counts.insert(counts.end(), temp.begin(), temp.end());
-				}
-				sort(counts.begin(), counts.end());
-				counts.resize(unique(counts.begin(), counts.end()) - counts.begin());
-
-				for (size_t i = 0; i < counts.size(); i++)
-				{
-					if (find(exec->first.begin(), exec->first.end(), counts[i]) == exec->first.end())
-					{
-						exec->first.push_back(counts[i]);
-						result.push_back(counts[i]);
-					}
+					exec->first.push_back(merge_stuck[i]);
+					result.push_back(merge_stuck[i]);
 				}
 			}
 		}
@@ -2238,306 +2503,161 @@ vector<int> petri_net::get_arc_cut(vector<int> base, bool backward, bool conditi
 	return result;
 }
 
-struct place_encoding_execution
+canonical petri_net::get_effective(petri_index observer, petri_index location)
 {
-	place_encoding_execution()
+	int count = -1;
+	list<map<vector<petri_index>, pair<canonical, int> >::iterator> L2;
+	for (map<vector<petri_index>, pair<canonical, int> >::iterator o = at(observer).observed.begin(); o != at(observer).observed.end(); o++)
 	{
-		net = NULL;
-		good = true;
-	}
-	place_encoding_execution(const place_encoding_execution &c)
-	{
-		good = c.good;
-		net = c.net;
-		contributions = c.contributions;
-		location = c.location;
-		covered = c.covered;
-		old = c.old;
-		value = c.value;
-	}
-	place_encoding_execution(petri_index start, petri_net *n)
-	{
-		net = n;
-		location = n->get_cut(vector<petri_index>(1, start), true, false);
-		covered.resize(n->S.size() + n->T.size(), false);
-		value = 0;
-		old = 0;
-		good = true;
-	}
-	~place_encoding_execution() {}
-
-	petri_net *net;
-	vector<petri_index> location;
-	vector<bool> covered;
-	canonical old;
-	canonical value;
-	vector<canonical> contributions;
-	bool good;
-
-	place_encoding_execution &operator=(place_encoding_execution c)
-	{
-		good = c.good;
-		net = c.net;
-		location = c.location;
-		covered = c.covered;
-		old = c.old;
-		value = c.value;
-		contributions = c.contributions;
-		return *this;
-	}
-
-	bool check_covered(petri_index i)
-	{
-		if (i.is_trans())
-			return covered[i.idx() + net->S.size()];
-		else
-			return covered[i.idx()];
-	}
-
-	void set_covered(petri_index i)
-	{
-		if (i.is_trans())
-			covered[i.idx() + net->S.size()] = true;
-		else
-			covered[i.idx()] = true;
-	}
-};
-
-canonical petri_net::get_effective_place_encoding(petri_index place, vector<petri_index> observer)
-{
-	//cout << "Effective Place Encoding from " << place << " to " << observer << endl;
-	vector<vector<petri_index> > execs(1, get_cut(vector<petri_index>(1, place), false, false));
-	vector<petri_index> s = get_cut(observer, false, false);
-	vector<bool> covered(S.size() + T.size(), false);
-
-	//cout << execs[0] << " -> " << s << endl;
-
-	for (size_t i = 0; i < execs[0].size(); )
-	{
-		if (find(s.begin(), s.end(), execs[0][i]) != s.end())
-			execs[0].erase(execs[0].begin() + i);
-		else
-			i++;
-	}
-
-	canonical encoding = at(place).predicate;
-
-	for (size_t i = 0; i < execs.size(); i++)
-	{
-		bool done = false;
-		while (!done)
+		if (find(o->first.begin(), o->first.end(), location) != o->first.end())
 		{
-			sort(execs[i].begin(), execs[i].end());
-			//cout << execs[i] << endl;
-
-			vector<int> ready_places;
-			vector<int> ready_transitions;
-			for (size_t j = 0; j < execs[i].size(); j++)
-				if (execs[i][j].is_trans() && !covered[S.size() + execs[i][j].idx()])
-					ready_transitions.push_back(j);
-
-			if (ready_transitions.size() == 0)
+			if (o->second.second > count)
 			{
-				for (size_t j = 0; j < execs[i].size(); j++)
-				{
-					bool found = false;
-					for (size_t k = 0; !found && k < observer.size(); k++)
-						if (at(observer[k]).observed.find(execs[i]) != at(observer[k]).observed.end())
-							found = true;
-
-					if (execs[i][j].is_place() && !covered[execs[i][j].idx()] && execs[i][j] != place && !found)
-					{
-						size_t total = 0;
-						for (size_t k = j; k < execs[i].size(); k++)
-							if (prev(execs[i][k]) == prev(execs[i][j]))
-								total++;
-
-						if (total == next(prev(execs[i][j])).size())
-						{
-							for (size_t k = j+1; k < execs[i].size(); )
-							{
-								if (prev(execs[i][k]) == prev(execs[i][j]))
-									execs[i].erase(execs[i].begin() + k);
-								else
-									k++;
-							}
-
-							ready_places.push_back(j);
-						}
-					}
-				}
+				L2.clear();
+				count = o->second.second;
 			}
 
-			if (ready_transitions.size() > 0)
-			{
-				for (size_t j = 0; j < ready_transitions.size(); j++)
-				{
-					covered[S.size() + execs[i][ready_transitions[j]].idx()] = true;
-
-					vector<petri_index> n = prev(execs[i][ready_transitions[j]]);
-					for (size_t k = n.size()-1; k >= 0 && k < n.size(); k--)
-					{
-						if (k > 0)
-							execs[i].push_back(n[k]);
-						else
-							execs[i][ready_transitions[j]] = n[k];
-					}
-				}
-			}
-			else if (ready_places.size() > 0)
-			{
-				for (size_t j = ready_places.size()-1; j >= 0 && j < ready_places.size(); j--)
-				{
-					covered[execs[i][ready_places[j]].idx()] = true;
-					int i1 = i;
-					if (j > 0)
-					{
-						execs.push_back(execs[i]);
-						i1 = execs.size()-1;
-					}
-
-					vector<petri_index> n = prev(execs[i1][ready_places[j]]);
-					for (size_t k = n.size()-1; k >= 0 && k < n.size(); k--)
-					{
-						if (k > 0)
-						{
-							execs.push_back(execs[i1]);
-							execs.back()[ready_places[j]] = n[k];
-						}
-						else
-							execs[i1][ready_places[j]] = n[k];
-					}
-				}
-			}
-			else
-				done = true;
+			if (o->second.second == count)
+				L2.push_back(o);
 		}
 	}
 
-	sort(execs.begin(), execs.end());
-	execs.resize(unique(execs.begin(), execs.end()) - execs.begin());
+	canonical result = at(location).predicate;
+	for (list<map<vector<petri_index>, pair<canonical, int> >::iterator>::iterator o = L2.begin(); o != L2.end(); o++)
+		result &= (*o)->second.first;
 
-	for (size_t i = 0; i < execs.size(); i++)
-	{
-		canonical temp = 0;
-		bool found = false;
-		for (size_t j = 0; j < observer.size(); j++)
-		{
-			map<vector<petri_index>, canonical>::iterator k = at(observer[j]).observed.find(execs[i]);
-			if (k != at(observer[j]).observed.end())
-			{
-				temp |= k->second;
-				found = true;
-			}
-		}
-
-		if (found)
-			encoding &= temp;
-	}
-
-	return encoding;
+	return result;
 }
 
-canonical petri_net::get_effective_state_encoding(vector<petri_index> state, vector<petri_index> observer, vector<petri_index> path)
+canonical petri_net::get_effective(petri_index observer, vector<petri_index> location)
 {
-	//cout << "Effective State Encoding from " << state << " to " << observer << endl;
-	vector<pair<petri_index, canonical> > idx;
-	for (size_t i = 0; i < state.size(); i++)
-		idx.push_back(pair<petri_index, canonical>(state[i], canonical(0)));
+	sort(location.begin(), location.end());
 
-	canonical encoding = 1;
-	for (size_t i = 0; i < state.size(); i++)
-		encoding &= at(state[i]).predicate;
-
-	//cout << "Start " << encoding.print(vars) << endl;
-
-	canonical result = 0;
-
-	bool bypass = false;
-	while (idx.size() > 0)
+	// get the list of observed states that share the maximum number
+	// of nodes with location (there must be at least one node shared)
+	int count = 1;
+	list<map<vector<petri_index>, pair<canonical, int> >::iterator> L1;
+	for (map<vector<petri_index>, pair<canonical, int> >::iterator o = at(observer).observed.begin(); o != at(observer).observed.end(); o++)
 	{
-		vector<int> movable;
-		for (size_t i = 0; i < idx.size(); i++)
+		int shared = vector_intersection_size(&location, &o->first);
+		if (shared > count)
 		{
-			size_t total = 0;
-			for (size_t j = i; j < idx.size(); j++)
-				if (idx[j].first == idx[i].first)
-					total++;
-
-			if (bypass || total == prev(idx[i].first).size())
-			{
-				for (size_t j = i+1; j < idx.size();)
-				{
-					if (idx[j].first == idx[i].first)
-					{
-						if (idx[i].first.is_place())
-							idx[i].second &= idx[j].second;
-						else if (idx[i].first.is_trans())
-							idx[i].second |= idx[j].second;
-
-						idx.erase(idx.begin() + j);
-					}
-					else
-						j++;
-				}
-
-				movable.push_back(i);
-			}
+			L1.clear();
+			count = shared;
 		}
 
-		//for (size_t i = 0; i < movable.size(); i++)
-		//	cout << "{" << idx[movable[i]].first << ", " << idx[movable[i]].second.print(vars) << "} ";
-		//cout << endl;
-
-		for (size_t i = 0; i < movable.size(); i++)
-		{
-			vector<petri_index> n = next(idx[movable[i]].first);
-			for (size_t j = 0; j < n.size(); )
-			{
-				if (find(path.begin(), path.end(), n[j]) == path.end())
-					n.erase(n.begin() + j);
-				else
-					j++;
-			}
-
-			if (n.size() == 0 || find(observer.begin(), observer.end(), idx[movable[i]].first) != observer.end() || idx[movable[i]].second == 1)
-			{
-				//cout << "Done " << idx[movable[i]].second.print(vars) << endl;
-				if (idx[movable[i]].second != 1)
-					result |= idx[movable[i]].second;
-
-				for (size_t j = i+1; j < movable.size(); j++)
-					if (movable[j] > movable[i])
-						movable[j]--;
-				idx.erase(idx.begin() + movable[i]);
-			}
-			else
-			{
-				if (idx[movable[i]].first.is_trans())
-					idx[movable[i]].second = ::merge(idx[movable[i]].second, ~at(idx[movable[i]].first).predicate);
-
-				for (size_t j = n.size()-1; j >= 0 && j < n.size(); j--)
-				{
-					if (j > 0)
-					{
-						idx.push_back(idx[movable[i]]);
-						idx.back().first = n[j];
-					}
-					else
-						idx[movable[i]].first = n[j];
-				}
-			}
-		}
-
-		bypass = false;
-		if (movable.size() == 0)
-			bypass = true;
+		if (shared == count)
+			L1.push_back(o);
 	}
 
-	if (result != 0)
-		return (encoding & result);
-	else
-		return encoding;
+	count = -1;
+	list<map<vector<petri_index>, pair<canonical, int> >::iterator> L2;
+	for (list<map<vector<petri_index>, pair<canonical, int> >::iterator>::iterator o = L1.begin(); o != L1.end(); o++)
+	{
+		if ((*o)->second.second > count)
+		{
+			L2.clear();
+			count = (*o)->second.second;
+		}
+
+		if ((*o)->second.second == count)
+			L2.push_back(*o);
+	}
+
+	canonical result = 1;
+	for (size_t i = 0; i < location.size(); i++)
+		result &= at(location[i]).predicate;
+
+	for (list<map<vector<petri_index>, pair<canonical, int> >::iterator>::iterator o = L2.begin(); o != L2.end(); o++)
+		result &= (*o)->second.first;
+
+	return result;
+}
+
+canonical petri_net::get_effective(vector<petri_index> observer, petri_index location)
+{
+	sort(observer.begin(), observer.end());
+
+	canonical result;
+	for (size_t i = 0; i < observer.size(); i++)
+	{
+		int count = -1;
+		list<map<vector<petri_index>, pair<canonical, int> >::iterator> L2;
+		for (map<vector<petri_index>, pair<canonical, int> >::iterator o = at(observer[i]).observed.begin(); o != at(observer[i]).observed.end(); o++)
+		{
+			if (find(o->first.begin(), o->first.end(), location) != o->first.end())
+			{
+				if (o->second.second > count)
+				{
+					L2.clear();
+					count = o->second.second;
+				}
+
+				if (o->second.second == count)
+					L2.push_back(o);
+			}
+		}
+
+		canonical temp = at(location).predicate;
+		for (list<map<vector<petri_index>, pair<canonical, int> >::iterator>::iterator o = L2.begin(); o != L2.end(); o++)
+			temp &= (*o)->second.first;
+
+		result |= temp;
+	}
+
+	return result;
+}
+
+canonical petri_net::get_effective(vector<petri_index> observer, vector<petri_index> location)
+{
+	sort(observer.begin(), observer.end());
+	sort(location.begin(), location.end());
+
+	canonical result;
+	for (size_t i = 0; i < observer.size(); i++)
+	{
+		// get the list of observed states that share the maximum number
+		// of nodes with location (there must be at least one node shared)
+		list<map<vector<petri_index>, pair<canonical, int> >::iterator> L1;
+		int count = 1;
+		for (map<vector<petri_index>, pair<canonical, int> >::iterator o = at(observer[i]).observed.begin(); o != at(observer[i]).observed.end(); o++)
+		{
+			int shared = vector_intersection_size(&location, &o->first);
+			if (shared > count)
+			{
+				L1.clear();
+				count = shared;
+			}
+
+			if (shared == count)
+				L1.push_back(o);
+		}
+
+		count = -1;
+		list<map<vector<petri_index>, pair<canonical, int> >::iterator> L2;
+		for (list<map<vector<petri_index>, pair<canonical, int> >::iterator>::iterator o = L1.begin(); o != L1.end(); o++)
+		{
+			if ((*o)->second.second > count)
+			{
+				L2.clear();
+				count = (*o)->second.second;
+			}
+
+			if ((*o)->second.second == count)
+				L2.push_back(*o);
+		}
+
+		canonical temp = 1;
+		for (list<map<vector<petri_index>, pair<canonical, int> >::iterator>::iterator o = L2.begin(); o != L2.end(); o++)
+			temp &= (*o)->second.first;
+
+		result |= temp;
+	}
+
+	for (size_t i = 0; i < location.size(); i++)
+		result &= at(location[i]).predicate;
+
+	return result;
 }
 
 dot_stmt petri_net::export_dot(int t_base, int s_base)
@@ -2597,7 +2717,7 @@ dot_stmt petri_net::export_dot(int t_base, int s_base)
 		if (elaborate)
 		{
 			string expr = "";
-			string parse = S[i].predicate.print(vars);
+			string parse = S[i].effective.print(vars);
 			for (size_t j = 0; j < parse.size(); j++)
 			{
 				if (parse[j] == '|')
@@ -2691,6 +2811,9 @@ dot_stmt petri_net::export_dot(int t_base, int s_base)
 		substmt.node_ids.push_back(dot_node_id(a.second.name()));
 		substmt.stmt_type = "edge";
 
+		substmt.attr_list.attrs.push_back(dot_a_list());
+		substmt.attr_list.attrs.back().as.push_back(dot_a("label", to_string(i)));
+
 		stmt.stmt_list.stmts.push_back(substmt);
 	}
 
@@ -2699,6 +2822,8 @@ dot_stmt petri_net::export_dot(int t_base, int s_base)
 
 void petri_net::import_dot(tokenizer &tokens, const dot_stmt &g, int t_base, int s_base)
 {
+	reset = 1;
+
 	canonical global_expr = 0;
 	canonical assume_expr = 1;
 	vector<canonical> assert_expr;
@@ -2748,7 +2873,21 @@ void petri_net::import_dot(tokenizer &tokens, const dot_stmt &g, int t_base, int
 							}
 						}
 						if (expr != "")
+						{
 							at(id).predicate = canonical(tokens, expr, vars);
+
+							if (id.is_trans())
+							{
+								vector<size_t> vl = at(id).predicate.vars();
+								for (size_t l = 0; l < vl.size(); l++)
+								{
+									if (at(id).active)
+										vars.globals[vl[l]].written = true;
+									else
+										vars.globals[vl[l]].read = true;
+								}
+							}
+						}
 					}
 					else if (g.stmt_list.stmts[i].attr_list.attrs[j].as[k].first.id == "style")
 					{

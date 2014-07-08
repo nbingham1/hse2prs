@@ -24,6 +24,7 @@ struct variable
 	bool		written;	// keep track of whether or not this variable is driven within this process
 	bool		read;
 
+	string inverse_name();
 	variable &operator=(variable v);
 };
 

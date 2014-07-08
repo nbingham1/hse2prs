@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.1415926-2.5-1.40.14 (TeX Live 2013/W32TeX) (format=pdflatex 2013.11.12)  5 JUN 2014 16:21
+This is pdfTeX, Version 3.1415926-2.5-1.40.14 (TeX Live 2013/W32TeX) (format=pdflatex 2013.11.12)  16 JUN 2014 19:48
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -904,9 +904,9 @@ LaTeX Font Info:    Try loading font information for U+stmry on input line 41.
 
 (c:/texlive/2013/texmf-dist/tex/latex/stmaryrd/ustmry.fd) [2 <./figures/state.p
 ng>]) (./elaboration.tex [3]) (./effective.tex [4] [5] [6] [7]) (./conflict.tex
-)
+[8])
 No file main.bbl.
-[8] (./main.aux) ) 
+[9] (./main.aux) ) 
 Here is how much of TeX's memory you used:
  24210 strings out of 493308
  566715 string characters out of 6141366
@@ -930,10 +930,10 @@ s/type1/urw/times/utmb8a.pfb><c:/texlive/2013/texmf-dist/fonts/type1/urw/times/
 utmb8a.pfb><c:/texlive/2013/texmf-dist/fonts/type1/urw/times/utmr8a.pfb><c:/tex
 live/2013/texmf-dist/fonts/type1/urw/times/utmr8a.pfb><c:/texlive/2013/texmf-di
 st/fonts/type1/urw/times/utmri8a.pfb>
-Output written on main.pdf (8 pages, 238754 bytes).
+Output written on main.pdf (9 pages, 239821 bytes).
 PDF statistics:
- 101 PDF objects out of 1000 (max. 8388607)
- 72 compressed objects within 1 object stream
+ 104 PDF objects out of 1000 (max. 8388607)
+ 74 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
  23 words of extra memory for PDF output out of 10000 (max. 10000000)
 

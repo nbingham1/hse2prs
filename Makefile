@@ -3,7 +3,7 @@ SOURCES	    :=  $(shell find src -name '*.cpp')
 OBJECTS	    :=  $(SOURCES:src/%.cpp=build/%.o)
 DIRECTORIES :=  $(sort $(dir $(OBJECTS)))
 LDFLAGS		 =  
-TARGET		 =  hse2states
+TARGET		 =  hse2prs
 
 all: build $(TARGET)
 
