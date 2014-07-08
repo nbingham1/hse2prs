@@ -121,7 +121,7 @@ int main(int argc, char **argv)
 						p.export_dot().print(cout);
 					else
 					{
-						ofstream os((name + "_dot").c_str());
+						ofstream os((name + "_elaborated.dot").c_str());
 						p.export_dot().print(os);
 						os.close();
 					}
